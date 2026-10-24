@@ -185,8 +185,8 @@ flowchart TD
     subgraph Backend ["Simulation Core (Thread-Safe)"]
         MGR["TrafficSimulationManager (simulation.py)"]
         SCHED["SignalScheduler (signal_scheduler.py)"]
-        QUEUES["4x CircularQueue (circular_queue.py)\nNorth, East, South, West"]
-        GRAPH["TrafficGraph (traffic_graph.py)\nAdjacency List"]
+        QUEUES["4x CircularQueue (circular_queue.py)<br/>North, East, South, West"]
+        GRAPH["TrafficGraph (traffic_graph.py)<br/>Adjacency List"]
     end
 
     JS -- "Fetch API (JSON/HTTP)" --> API
@@ -518,12 +518,12 @@ Activate the environment in PowerShell:
 ```
 
 > [!TIP]
-> **PowerShell Execution Policy Workaround:** If Windows blocks script activation with the message `Activate.ps1 cannot be loaded because running scripts is disabled on this system`, apply a session-only execution policy bypass:
-> ```powershell
-> Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-> .\.venv\Scripts\Activate.ps1
-> ```
-> This command only affects your current terminal window and does not alter permanent system-wide security policies.
+> **PowerShell Execution Policy Workaround:** If Windows blocks script activation with the message `Activate.ps1 cannot be loaded because running scripts is disabled on this system`, apply a session-only execution policy bypass. This command only affects your current terminal window and does not alter permanent system-wide security policies:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
 
 Alternatively, in standard Windows Command Prompt (`cmd.exe`), run:
 ```cmd
@@ -615,198 +615,231 @@ The backend exposes a clean REST API returning JSON responses. All endpoints are
 ### Detailed Endpoint Specifications and Examples
 
 #### 1. Health Check
-- **`GET /api/health`**
+
+- **Endpoint:** `GET /api/health`
 - **Response (`200 OK`):**
-  ```json
-  {
-    "service": "Traffic Signal Control System API",
-    "simulation_status": "STOPPED",
-    "status": "healthy",
-    "version": "1.0.0"
-  }
-  ```
+
+```json
+{
+  "service": "Traffic Signal Control System API",
+  "simulation_status": "STOPPED",
+  "status": "healthy",
+  "version": "1.0.0"
+}
+```
 
 #### 2. Get Simulation State
-- **`GET /api/state`**
+
+- **Endpoint:** `GET /api/state`
 - **Response (`200 OK`):**
-  ```json
-  {
+
+```json
+{
+  "active_direction": "North",
+  "current_phase": "GREEN",
+  "phase_elapsed": 2,
+  "remaining_phase_time": 6,
+  "signals": {
+    "North": "GREEN",
+    "East": "RED",
+    "South": "RED",
+    "West": "RED"
+  },
+  "sim_time": 14,
+  "status": "RUNNING",
+  "statistics": {
+    "average_waiting_time": 4.5,
+    "emergency_waiting": 1,
+    "total_arrived": 12,
+    "total_served": 6,
+    "total_waiting": 6,
+    "traffic_throughput_per_min": 25.71
+  }
+}
+```
+
+#### 3. Add Vehicle
+
+- **Endpoint:** `POST /api/vehicles/add`
+- **Headers:** `Content-Type: application/json`
+
+**Request Body (Standard Vehicle):**
+
+```json
+{
+  "direction": "North",
+  "vehicle_type": "Car"
+}
+```
+
+**Response (`201 Created`):**
+
+```json
+{
+  "message": "Vehicle VEH-0008 queued at North.",
+  "queue_length": 3,
+  "success": true,
+  "vehicle": {
+    "arrival_time": 14,
+    "created_at": "20:30:15",
+    "direction": "North",
+    "id": "VEH-0008",
+    "is_emergency": false,
+    "priority": 0,
+    "type": "Car"
+  }
+}
+```
+
+**Request Body (Emergency Vehicle):**
+
+```json
+{
+  "direction": "East",
+  "vehicle_type": "Ambulance"
+}
+```
+
+**Response (`201 Created`):**
+
+```json
+{
+  "message": "Vehicle EMG-002 queued at East.",
+  "queue_length": 2,
+  "success": true,
+  "vehicle": {
+    "arrival_time": 14,
+    "created_at": "20:30:25",
+    "direction": "East",
+    "id": "EMG-002",
+    "is_emergency": true,
+    "priority": 1,
+    "type": "Ambulance"
+  }
+}
+```
+
+**Error Responses (`400 Bad Request`):**
+
+- Invalid direction: `{"error": "Invalid or missing direction 'NorthEast'. Valid options: ['North', 'East', 'South', 'West']."}`
+- Invalid type: `{"error": "Invalid vehicle type 'Airplane'. Valid types: ['Car', 'Bus', 'Truck', 'Bike', 'Ambulance', 'Fire Engine', 'Police Vehicle']."}`
+- Queue full: `{"error": "Queue Overflow: Cannot enqueue item. Capacity of 8 reached.", "message": "Queue at North is at maximum capacity (8).", "success": false}`
+
+#### 4. Step Simulation
+
+- **Endpoint:** `POST /api/simulation/step`
+- **Request Body:**
+
+```json
+{
+  "dt": 1
+}
+```
+
+**Response (`200 OK`):**
+
+```json
+{
+  "message": "Advanced simulation by 1 second(s).",
+  "state": {
     "active_direction": "North",
     "current_phase": "GREEN",
-    "phase_elapsed": 2,
-    "remaining_phase_time": 6,
     "signals": {
       "North": "GREEN",
       "East": "RED",
       "South": "RED",
       "West": "RED"
     },
-    "sim_time": 14,
-    "status": "RUNNING",
-    "statistics": {
-      "average_waiting_time": 4.5,
-      "emergency_waiting": 1,
-      "total_arrived": 12,
-      "total_served": 6,
-      "total_waiting": 6,
-      "traffic_throughput_per_min": 25.71
-    }
-  }
-  ```
-
-#### 3. Add Vehicle
-- **`POST /api/vehicles/add`**
-- **Headers:** `Content-Type: application/json`
-- **Request Body (Standard Vehicle):**
-  ```json
-  {
-    "direction": "North",
-    "vehicle_type": "Car"
-  }
-  ```
-- **Response (`201 Created`):**
-  ```json
-  {
-    "message": "Vehicle VEH-0008 queued at North.",
-    "queue_length": 3,
-    "success": true,
-    "vehicle": {
-      "arrival_time": 14,
-      "created_at": "20:30:15",
-      "direction": "North",
-      "id": "VEH-0008",
-      "is_emergency": false,
-      "priority": 0,
-      "type": "Car"
-    }
-  }
-  ```
-- **Request Body (Emergency Vehicle):**
-  ```json
-  {
-    "direction": "East",
-    "vehicle_type": "Ambulance"
-  }
-  ```
-- **Response (`201 Created`):**
-  ```json
-  {
-    "message": "Vehicle EMG-002 queued at East.",
-    "queue_length": 2,
-    "success": true,
-    "vehicle": {
-      "arrival_time": 14,
-      "created_at": "20:30:25",
-      "direction": "East",
-      "id": "EMG-002",
-      "is_emergency": true,
-      "priority": 1,
-      "type": "Ambulance"
-    }
-  }
-  ```
-- **Error Responses (`400 Bad Request`):**
-  - Invalid direction: `{"error": "Invalid or missing direction 'NorthEast'. Valid options: ['North', 'East', 'South', 'West']."}`
-  - Invalid type: `{"error": "Invalid vehicle type 'Airplane'. Valid types: ['Car', 'Bus', 'Truck', 'Bike', 'Ambulance', 'Fire Engine', 'Police Vehicle']."}`
-  - Queue full: `{"error": "Queue Overflow: Cannot enqueue item. Capacity of 8 reached.", "message": "Queue at North is at maximum capacity (8).", "success": false}`
-
-#### 4. Step Simulation
-- **`POST /api/simulation/step`**
-- **Request Body:**
-  ```json
-  {
-    "dt": 1
-  }
-  ```
-- **Response (`200 OK`):**
-  ```json
-  {
-    "message": "Advanced simulation by 1 second(s).",
-    "state": {
+    "sim_time": 15,
+    "status": "STOPPED"
+  },
+  "step_info": {
+    "departed_this_step": [],
+    "scheduler": {
+      "action_note": "Normal phase progression",
       "active_direction": "North",
       "current_phase": "GREEN",
-      "signals": {"North": "GREEN", "East": "RED", "South": "RED", "West": "RED"},
-      "sim_time": 15,
-      "status": "STOPPED"
+      "phase_elapsed_time": 3,
+      "transition_occurred": false
     },
-    "step_info": {
-      "departed_this_step": [],
-      "scheduler": {
-        "action_note": "Normal phase progression",
-        "active_direction": "North",
-        "current_phase": "GREEN",
-        "phase_elapsed_time": 3,
-        "transition_occurred": false
-      },
-      "sim_time": 15,
-      "status": "STOPPED"
-    },
-    "success": true
-  }
-  ```
+    "sim_time": 15,
+    "status": "STOPPED"
+  },
+  "success": true
+}
+```
 
 #### 5. Calculate Graph Route
-- **`POST /api/graph/route`**
+
+- **Endpoint:** `POST /api/graph/route`
 - **Request Body (Dijkstra):**
-  ```json
-  {
-    "source": "INT-6",
-    "destination": "INT-4",
-    "algorithm": "dijkstra"
-  }
-  ```
-- **Response (`200 OK`):**
-  ```json
-  {
-    "algorithm": "Dijkstra's Algorithm (Weighted Optimization)",
-    "average_congestion_ratio": 0.33,
-    "explanation": "Dijkstra optimizes for minimum travel time by factoring real-time road congestion and delay.",
-    "found": true,
-    "hops": 2,
-    "path": ["INT-6", "INT-5", "INT-4"],
-    "path_names": [
-      "Uptown Health City",
-      "West University Gate",
-      "South Ring Interchange"
-    ],
-    "total_cost_minutes": 9.42,
-    "total_distance_km": 7.3
-  }
-  ```
-- **Error Response (`404 Not Found`):**
-  ```json
-  {
-    "algorithm": "Breadth-First Search (BFS)",
-    "error": "No accessible route exists from Uptown Health City to Remote Island.",
-    "found": false
-  }
-  ```
+
+```json
+{
+  "source": "INT-6",
+  "destination": "INT-4",
+  "algorithm": "dijkstra"
+}
+```
+
+**Response (`200 OK`):**
+
+```json
+{
+  "algorithm": "Dijkstra's Algorithm (Weighted Optimization)",
+  "average_congestion_ratio": 0.33,
+  "explanation": "Dijkstra optimizes for minimum travel time by factoring real-time road congestion and delay.",
+  "found": true,
+  "hops": 2,
+  "path": ["INT-6", "INT-5", "INT-4"],
+  "path_names": [
+    "Uptown Health City",
+    "West University Gate",
+    "South Ring Interchange"
+  ],
+  "total_cost_minutes": 9.42,
+  "total_distance_km": 7.3
+}
+```
+
+**Error Response (`404 Not Found`):**
+
+```json
+{
+  "algorithm": "Breadth-First Search (BFS)",
+  "error": "No accessible route exists from Uptown Health City to Remote Island.",
+  "found": false
+}
+```
 
 #### 6. Export Queues
-- **`GET /api/queues`**
+
+- **Endpoint:** `GET /api/queues`
 - **Response (`200 OK`):**
-  Returns raw slot array for each of the four directions:
-  ```json
-  {
-    "capacity": 8,
-    "queues": {
-      "North": {
-        "capacity": 8,
-        "front": 0,
-        "rear": 2,
-        "size": 3,
-        "is_empty": false,
-        "is_full": false,
-        "slots": [
-          {"index": 0, "is_occupied": true, "is_front": true, "is_rear": false, "item": {"id": "VEH-0001", "type": "Car"}},
-          {"index": 1, "is_occupied": true, "is_front": false, "is_rear": false, "item": {"id": "VEH-0002", "type": "Bus"}},
-          {"index": 2, "is_occupied": true, "is_front": false, "is_rear": true, "item": {"id": "VEH-0003", "type": "Car"}},
-          {"index": 3, "is_occupied": false, "is_front": false, "is_rear": false, "item": null}
-        ]
-      }
+
+Returns raw slot array for each of the four directions:
+
+```json
+{
+  "capacity": 8,
+  "queues": {
+    "North": {
+      "capacity": 8,
+      "front": 0,
+      "rear": 2,
+      "size": 3,
+      "is_empty": false,
+      "is_full": false,
+      "slots": [
+        {"index": 0, "is_occupied": true, "is_front": true, "is_rear": false, "item": {"id": "VEH-0001", "type": "Car"}},
+        {"index": 1, "is_occupied": true, "is_front": false, "is_rear": false, "item": {"id": "VEH-0002", "type": "Bus"}},
+        {"index": 2, "is_occupied": true, "is_front": false, "is_rear": true, "item": {"id": "VEH-0003", "type": "Car"}},
+        {"index": 3, "is_occupied": false, "is_front": false, "is_rear": false, "item": null}
+      ]
     }
   }
-  ```
+}
+```
 
 ---
 
@@ -903,11 +936,11 @@ sequenceDiagram
     Note over Queue,UI: Dequeuing from front then enqueuing at full end<br/>wraps rear pointer from index 7 back to index 0
 
     User->>UI: 6. Click "Start" to run real-time clock
-    Sched-->>UI: GREEN light counts down -> switches to YELLOW -> switches to East GREEN
+    Sched-->>UI: GREEN light counts down → switches to YELLOW → switches to East GREEN
 
     User->>UI: 7. Select "West" + "Ambulance" & click "+ Queue Vehicle"
     UI->>Queue: Enqueues EMG-001 (Priority 1) at West
-    Sched-->>UI: Detects emergency -> Preempts next green light to West
+    Sched-->>UI: Detects emergency → Preempts next green light to West
 
     User->>UI: 8. Navigate to "Graph Analysis" section
     User->>UI: 9. Select Source: "INT-6" (Hospital) & Destination: "INT-4" (Interchange)
@@ -977,5 +1010,3 @@ The **Traffic Signal Control System** demonstrates how fundamental Computer Scie
 - **Graph Traversal Algorithms (BFS and Dijkstra)** solve the city-wide network problem by evaluating road topologies, calculating unweighted minimum-hop corridors, and computing optimal, congestion-aware travel routes using the Bureau of Public Roads delay formulation.
 
 By combining algorithmic rigor with an interactive web dashboard, this project bridges the gap between abstract Data Structures and Algorithms theory and practical intelligent transportation system design.
-#   T r a f f i c _ c o n t r o l _ s y s t e m  
- 
