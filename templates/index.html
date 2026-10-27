@@ -5,46 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Traffic Signal Control System</title>
   <meta name="description" content="Traffic Signal Control System using Circular Queues, Priority Scheduling, and Graph-Based Traffic Flow Analysis.">
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
 
-  <!-- Top Navigation Bar -->
   <header class="top-navbar">
     <div class="brand-section">
-      <div class="brand-logo-badge" title="Traffic Signal Control System">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="6" y="2" width="12" height="20" rx="3" ry="3"/>
-          <circle cx="12" cy="6" r="2" fill="#ef4444"/>
-          <circle cx="12" cy="12" r="2" fill="#eab308"/>
-          <circle cx="12" cy="18" r="2" fill="#10b981"/>
-        </svg>
-      </div>
       <div class="brand-title-group">
         <h1>Traffic Signal Control System</h1>
       </div>
     </div>
-
-    <nav class="nav-links">
-      <a href="#section-intersection" class="nav-btn active">Live Simulation</a>
-      <a href="#section-dsa-queues" class="nav-btn">Circular Queues</a>
-      <a href="#section-graph-network" class="nav-btn">Graph Analysis</a>
-      <a href="#section-comparison" class="nav-btn">DSA Comparison</a>
-    </nav>
-
-    <div class="nav-status-badge status-stopped" id="status-badge">
-      <span class="status-dot"></span>
-      <span id="status-text">STOPPED</span>
-    </div>
   </header>
 
-  <!-- Main Dashboard Container -->
+  <nav class="dashboard-tabs" role="tablist" aria-label="Dashboard sections">
+    <button class="dashboard-tab active" id="tab-simulation" type="button" role="tab"
+      aria-selected="true" aria-controls="panel-simulation" data-tab="simulation">Simulation</button>
+    <button class="dashboard-tab" id="tab-queue" type="button" role="tab"
+      aria-selected="false" aria-controls="panel-queue" data-tab="queue" tabindex="-1">Circular Queue</button>
+    <button class="dashboard-tab" id="tab-graph" type="button" role="tab"
+      aria-selected="false" aria-controls="panel-graph" data-tab="graph" tabindex="-1">Graph Analysis</button>
+    <button class="dashboard-tab" id="tab-comparison" type="button" role="tab"
+      aria-selected="false" aria-controls="panel-comparison" data-tab="comparison" tabindex="-1">Comparison</button>
+  </nav>
+
   <main class="dashboard-container">
 
-    <!-- Section A: Overview & Global Simulation Controls -->
+    <section class="tab-panel simulation-panel" id="panel-simulation" role="tabpanel"
+      aria-labelledby="tab-simulation" data-panel="simulation">
     <section class="control-bar" id="section-controls">
       <div class="control-buttons-group">
-        <button id="btn-start" class="btn btn-primary" title="Start background simulation">
+        <button id="btn-start" class="btn btn-primary" title="Start or resume simulation">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           Start
         </button>
@@ -52,89 +43,29 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
           Pause
         </button>
-        <button id="btn-resume" class="btn btn-primary" title="Resume simulation" disabled>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Resume
-        </button>
         <button id="btn-reset" class="btn btn-danger" title="Reset simulation state">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
           Reset
         </button>
-        <button id="btn-step" class="btn btn-secondary" title="Advance simulation by 1 controlled second">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"/></svg>
-          Step (+1s)
-        </button>
-        <button id="btn-batch-add" class="btn btn-accent" title="Add random batch of vehicles">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-          Batch (+4 Veh)
-        </button>
-        <button id="btn-open-config" class="btn btn-secondary" title="Configure signal parameters">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Settings
-        </button>
       </div>
 
-      <div class="active-telemetry-pill">
-        <div class="telemetry-item">
-          <span class="telemetry-label">Active Direction</span>
-          <span class="telemetry-value" id="telemetry-direction">North</span>
-        </div>
-        <div class="telemetry-item">
-          <span class="telemetry-label">Signal Phase</span>
-          <span class="telemetry-value" id="telemetry-phase">GREEN (8s)</span>
-        </div>
-        <div class="telemetry-item">
-          <span class="telemetry-label">Elapsed Time</span>
-          <span class="telemetry-value" id="telemetry-time">00:00</span>
-        </div>
-      </div>
     </section>
 
     <!-- Section B: Traffic Performance Statistics Cards -->
     <section class="stats-grid">
       <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-title">Vehicles Waiting</span>
-          <div class="stat-icon">🚗</div>
-        </div>
+        <span class="stat-title">Vehicles Waiting</span>
         <div class="stat-value" id="stat-total-waiting">0</div>
-        <div class="stat-meta">Across 4 circular queues</div>
       </div>
 
       <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-title">Vehicles Served</span>
-          <div class="stat-icon">🏁</div>
-        </div>
+        <span class="stat-title">Vehicles Served</span>
         <div class="stat-value" id="stat-total-served">0</div>
-        <div class="stat-meta">Cleared during green lights</div>
       </div>
 
       <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-title">Avg Waiting Time</span>
-          <div class="stat-icon">⏱️</div>
-        </div>
+        <span class="stat-title">Average Waiting Time</span>
         <div class="stat-value" id="stat-avg-wait">0.0s</div>
-        <div class="stat-meta">Mean departure delay</div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-card-header">
-          <span class="stat-title">Traffic Throughput</span>
-          <div class="stat-icon">📈</div>
-        </div>
-        <div class="stat-value" id="stat-throughput">0.0/m</div>
-        <div class="stat-meta">Vehicles served / min</div>
-      </div>
-
-      <div class="stat-card" id="stat-card-emergency">
-        <div class="stat-card-header">
-          <span class="stat-title">Emergency Waiting</span>
-          <div class="stat-icon">🚨</div>
-        </div>
-        <div class="stat-value" id="stat-emergency-count">0</div>
-        <div class="stat-meta">Priority preemption active</div>
       </div>
     </section>
 
@@ -145,13 +76,8 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title-group">
-            <h2>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
-              4-Way Smart Intersection
-            </h2>
-            <div class="card-subtitle">Zero-conflict circular queue scheduling with yellow-light transitions</div>
+            <h2>Traffic Intersection</h2>
           </div>
-          <span class="metric-tag">Central Junction (CBD)</span>
         </div>
 
         <div class="intersection-container">
@@ -168,6 +94,11 @@
             <div class="road-divider-h-left"></div>
             <div class="road-divider-h-right"></div>
 
+            <span class="direction-label direction-north" aria-hidden="true">N</span>
+            <span class="direction-label direction-east" aria-hidden="true">E</span>
+            <span class="direction-label direction-south" aria-hidden="true">S</span>
+            <span class="direction-label direction-west" aria-hidden="true">W</span>
+
             <!-- Pedestrian Crosswalks -->
             <div class="crosswalk-north"></div>
             <div class="crosswalk-south"></div>
@@ -179,35 +110,6 @@
             <div class="stop-line stop-line-south" title="South Stop Line"></div>
             <div class="stop-line stop-line-west" title="West Stop Line"></div>
             <div class="stop-line stop-line-east" title="East Stop Line"></div>
-
-            <!-- Approach Corner Badges & Quick Action Buttons -->
-            <div class="approach-control-badge badge-north">
-              <strong>NORTH ↓</strong>
-              <span id="approach-count-north">0/8</span>
-              <button class="approach-btn-mini" data-dir="North" data-emg="false">+ Car</button>
-              <button class="approach-btn-mini emg" data-dir="North" data-emg="true">+ 🚑</button>
-            </div>
-
-            <div class="approach-control-badge badge-south">
-              <strong>SOUTH ↑</strong>
-              <span id="approach-count-south">0/8</span>
-              <button class="approach-btn-mini" data-dir="South" data-emg="false">+ Car</button>
-              <button class="approach-btn-mini emg" data-dir="South" data-emg="true">+ 🚑</button>
-            </div>
-
-            <div class="approach-control-badge badge-east">
-              <strong>EAST ←</strong>
-              <span id="approach-count-east">0/8</span>
-              <button class="approach-btn-mini" data-dir="East" data-emg="false">+ Car</button>
-              <button class="approach-btn-mini emg" data-dir="East" data-emg="true">+ 🚑</button>
-            </div>
-
-            <div class="approach-control-badge badge-west">
-              <strong>WEST →</strong>
-              <span id="approach-count-west">0/8</span>
-              <button class="approach-btn-mini" data-dir="West" data-emg="false">+ Car</button>
-              <button class="approach-btn-mini emg" data-dir="West" data-emg="true">+ 🚑</button>
-            </div>
 
             <!-- 4 Physical Traffic Lights Fixtures -->
             <!-- North Light -->
@@ -255,52 +157,41 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title-group">
-            <h2>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-              Vehicle Queue Dispatcher
-            </h2>
-            <div class="card-subtitle">Real FIFO queues & emergency priority preemption</div>
+            <h2>Vehicle Queue</h2>
           </div>
         </div>
 
         <!-- Manual Dispatcher Controls -->
         <div class="vehicle-dispatcher-bar">
-          <select id="dispatch-direction-select" class="input-select">
-            <option value="North">North Approach (↓)</option>
-            <option value="East">East Approach (←)</option>
-            <option value="South">South Approach (↑)</option>
-            <option value="West">West Approach (→)</option>
+          <select id="dispatch-direction-select" class="input-select" aria-label="Vehicle direction">
+            <option value="North">North</option>
+            <option value="East">East</option>
+            <option value="South">South</option>
+            <option value="West">West</option>
           </select>
 
-          <select id="dispatch-type-select" class="input-select">
-            <option value="Car">🚗 Normal Car</option>
-            <option value="Bus">🚌 City Bus</option>
-            <option value="Truck">🚚 Cargo Truck</option>
-            <option value="Bike">🏍️ Motorbike</option>
-            <option value="Ambulance">🚑 Ambulance (Priority 1)</option>
-            <option value="Fire Engine">🚒 Fire Engine (Priority 2)</option>
-            <option value="Police Vehicle">🚓 Police Cruiser (Priority 3)</option>
+          <select id="dispatch-type-select" class="input-select" aria-label="Vehicle type">
+            <option value="Car">Car</option>
+            <option value="Bus">Bus</option>
+            <option value="Truck">Truck</option>
+            <option value="Bike">Bike</option>
+            <option value="Ambulance">Ambulance</option>
+            <option value="Fire Engine">Fire Engine</option>
+            <option value="Police Vehicle">Police Vehicle</option>
           </select>
 
-          <button id="btn-dispatch-vehicle" class="btn btn-primary" style="flex:1;">
-            + Queue Vehicle
-          </button>
+          <div class="dispatch-actions">
+            <button id="btn-dispatch-vehicle" class="btn btn-primary">Add Vehicle</button>
+            <button id="btn-dispatch-emergency" class="btn btn-danger">Emergency Vehicle</button>
+          </div>
         </div>
 
         <!-- Directional Queue Tabs -->
         <div class="queue-tabs-nav">
-          <button class="queue-tab-btn active" data-direction="North">
-            North <span class="tab-pill" id="tab-pill-north">0</span>
-          </button>
-          <button class="queue-tab-btn" data-direction="East">
-            East <span class="tab-pill" id="tab-pill-east">0</span>
-          </button>
-          <button class="queue-tab-btn" data-direction="South">
-            South <span class="tab-pill" id="tab-pill-south">0</span>
-          </button>
-          <button class="queue-tab-btn" data-direction="West">
-            West <span class="tab-pill" id="tab-pill-west">0</span>
-          </button>
+          <button class="queue-tab-btn active" data-direction="North">North</button>
+          <button class="queue-tab-btn" data-direction="East">East</button>
+          <button class="queue-tab-btn" data-direction="South">South</button>
+          <button class="queue-tab-btn" data-direction="West">West</button>
         </div>
 
         <!-- Waiting Vehicles List -->
@@ -308,34 +199,21 @@
           <div class="queue-empty-placeholder">Loading directional queues...</div>
         </div>
 
-        <!-- Recent Audit Events Feed -->
-        <div style="margin-top:1.25rem; border-top:1px solid var(--border-card); padding-top:1rem;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-            <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.05em;">Live Event Audit Feed</span>
-            <span class="metric-tag">Sliding Window</span>
-          </div>
-          <div class="event-feed" id="event-feed-container"></div>
-        </div>
-
       </div>
 
     </div>
 
-    <!-- Section E: DSA Learning Panel & Live Circular Queue Visualizer -->
+    </section>
+
+    <section class="tab-panel queue-panel" id="panel-queue" role="tabpanel"
+      aria-labelledby="tab-queue" data-panel="queue" hidden>
     <section class="circular-queue-visualizer-card" id="section-dsa-queues">
-      <div class="card-header" style="border-bottom-color: rgba(6,182,212,0.2);">
+      <div class="queue-panel-header">
         <div class="card-title-group">
-          <h2>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-            DSA Interactive Deep-Dive: Circular Queue Memory Model
-          </h2>
-          <div class="card-subtitle">
-            Demonstrating real-time array storage, front/rear indices, FIFO dequeue, and modulo wrap-around
-          </div>
+          <h2>Circular Queue</h2>
         </div>
-        <div style="display:flex; align-items:center; gap:0.6rem;">
-          <label style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">Inspect Direction:</label>
-          <select id="dsa-visualizer-select" class="input-select" style="padding:0.35rem 0.65rem;">
+        <div class="queue-direction-select">
+          <select id="dsa-visualizer-select" class="input-select" aria-label="Queue direction">
             <option value="North">North Queue</option>
             <option value="East">East Queue</option>
             <option value="South">South Queue</option>
@@ -345,18 +223,12 @@
       </div>
 
       <!-- Telemetry row for Circular Queue -->
-      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; margin-top:0.75rem; font-size:0.82rem;">
-        <div>Fixed Capacity: <strong id="dsa-capacity-val" style="color:#38bdf8;">8</strong></div>
-        <div>Current Size: <strong id="dsa-size-val" style="color:#34d399;">0</strong></div>
-        <div>Front Index: <strong id="dsa-front-val" style="color:#10b981;">-1</strong></div>
-        <div>Rear Index: <strong id="dsa-rear-val" style="color:#f59e0b;">-1</strong></div>
-        <div>Time Complexity: <span class="metric-tag">Enqueue O(1)</span> <span class="metric-tag">Dequeue O(1)</span></div>
+      <div class="queue-metrics">
+        <div><span>Front</span><strong id="dsa-front-val">-1</strong></div>
+        <div><span>Rear</span><strong id="dsa-rear-val">-1</strong></div>
       </div>
 
-      <!-- Wrap Around Callout -->
-      <div class="wrap-around-banner" id="wrap-around-notice" style="margin-top:1rem;">
-        <span>📌 Array Capacity: 8 slots. Modulo indexing guarantees O(1) enqueue & dequeue without shifting elements.</span>
-      </div>
+      <div class="queue-activity" id="wrap-around-notice" aria-live="polite"></div>
 
       <!-- 8-Slot Fixed Array Visualization -->
       <div class="array-slots-grid" id="array-slots-grid">
@@ -364,19 +236,15 @@
       </div>
     </section>
 
-    <!-- Section F: Graph-Based Traffic Flow Analysis -->
+    </section>
+
+    <section class="tab-panel graph-panel" id="panel-graph" role="tabpanel"
+      aria-labelledby="tab-graph" data-panel="graph" hidden>
     <section class="card" id="section-graph-network">
       <div class="card-header">
         <div class="card-title-group">
-          <h2>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            Graph-Based Traffic Flow Analysis (Macro Smart-City Network)
-          </h2>
-          <div class="card-subtitle">
-            Vertices = Traffic Junctions • Edges = Connecting Road Corridors with Capacity, Congestion, and Cost
-          </div>
+          <h2>Road Network</h2>
         </div>
-        <span class="metric-tag">7-Node City Network</span>
       </div>
 
       <div class="graph-route-grid">
@@ -384,111 +252,58 @@
         <!-- Left: Interactive SVG Road Network -->
         <div class="graph-canvas-box">
           <svg class="graph-svg" id="city-traffic-svg" viewBox="0 0 600 420"></svg>
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem; font-size:0.72rem; color:var(--text-dim);">
-            <span>🟢 Low Congestion (&lt;40%)</span>
-            <span>🟡 Moderate (40-75%)</span>
-            <span>🔴 Heavy Congestion (&gt;75%)</span>
-            <span>🔵 Highlighted Active Route</span>
-          </div>
         </div>
 
         <!-- Right: Route Planning & Traversal Controls -->
         <div class="route-form">
           <div class="form-group">
-            <label class="form-label">Origin Intersection (Source):</label>
+            <label class="form-label" for="route-source-select">Origin</label>
             <select id="route-source-select" class="input-select"></select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Destination Intersection (Target):</label>
+            <label class="form-label" for="route-target-select">Destination</label>
             <select id="route-target-select" class="input-select"></select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Routing Algorithm Strategy:</label>
-            <div style="display:flex; gap:1rem; margin-top:0.25rem;">
-              <label style="font-size:0.82rem; cursor:pointer; display:flex; align-items:center; gap:0.3rem;">
-                <input type="radio" name="route-algo" value="bfs" checked> BFS (Minimum Intersections)
-              </label>
-              <label style="font-size:0.82rem; cursor:pointer; display:flex; align-items:center; gap:0.3rem;">
-                <input type="radio" name="route-algo" value="dijkstra"> Dijkstra (Least Travel Delay)
+            <span class="form-label">Algorithm</span>
+            <div class="route-algorithm-options">
+              <label class="route-algorithm-option">
+                <input type="radio" name="route-algo" value="bfs" checked> BFS
               </label>
             </div>
           </div>
 
-          <button id="btn-calculate-route" class="btn btn-primary" style="margin-top:0.5rem;">
-            🔍 Calculate Route
+          <button id="btn-calculate-route" class="btn btn-primary">
+            Calculate Route
           </button>
 
           <!-- Route Output Container -->
-          <div class="route-result-box" id="route-result-container">
-            <div style="color:var(--text-dim); text-align:center;">Select an origin and destination to calculate path.</div>
-          </div>
+          <div class="route-result-box" id="route-result-container"></div>
         </div>
 
       </div>
     </section>
 
-    <!-- Section G: Queue-Based vs Graph-Based Comparison Panel -->
+    </section>
+
+    <section class="tab-panel comparison-panel" id="panel-comparison" role="tabpanel"
+      aria-labelledby="tab-comparison" data-panel="comparison" hidden>
     <section class="card" id="section-comparison">
       <div class="card-header">
         <div class="card-title-group">
-          <h2>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-            Comparative Evaluation: Queue-Based Scheduling vs Graph-Based Analysis
-          </h2>
-          <div class="card-subtitle">
-            Micro-Level Intersection Dispatching vs Macro-Level City Flow Routing
-          </div>
+          <h2>Comparison</h2>
         </div>
       </div>
 
       <div class="comparison-table-wrapper" id="comparison-table-content">
-        <div style="color:var(--text-dim); padding:1rem; text-align:center;">Loading comparison metrics...</div>
+        <div style="color:var(--text-dim); padding:1rem; text-align:center;">Loading comparison…</div>
       </div>
+    </section>
     </section>
 
   </main>
-
-  <!-- Configuration Modal -->
-  <div class="modal-backdrop" id="config-modal">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>Signal Scheduler Settings</h3>
-        <button class="modal-close" id="btn-close-config">&times;</button>
-      </div>
-
-      <div style="display:flex; flex-direction:column; gap:1rem;">
-        <div class="form-group">
-          <label class="form-label">Green Light Duration (seconds):</label>
-          <input type="number" id="input-green-duration" class="input-select" value="8" min="3" max="30">
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Yellow Caution Duration (seconds):</label>
-          <input type="number" id="input-yellow-duration" class="input-select" value="3" min="1" max="10">
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Scheduling Strategy:</label>
-          <select id="input-strategy-select" class="input-select">
-            <option value="adaptive_priority">Adaptive Priority (Emergency Preemption & Queue Balance)</option>
-            <option value="round_robin">Round-Robin (Strict Sequential North→East→South→West)</option>
-          </select>
-        </div>
-
-        <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1rem;">
-          <button class="btn btn-secondary" onclick="document.getElementById('config-modal').classList.remove('open')">Cancel</button>
-          <button class="btn btn-primary" id="btn-save-config">Save Configuration</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Footer -->
-  <footer class="dashboard-footer">
-    <p>Traffic Signal Control System | Intelligent Traffic Monitoring &amp; Analysis</p>
-  </footer>
 
   <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>

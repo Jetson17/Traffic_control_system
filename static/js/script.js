@@ -18,15 +18,14 @@ const state = {
   prevQueueCounts: {}
 };
 
-// Vehicle Type Emoji Map
-const VEHICLE_ICONS = {
-  'Car': '🚗',
-  'Bus': '🚌',
-  'Truck': '🚚',
-  'Bike': '🏍️',
-  'Ambulance': '🚑',
-  'Fire Engine': '🚒',
-  'Police Vehicle': '🚓'
+const VEHICLE_COLORS = {
+  'Car': '#2563eb',
+  'Bus': '#d97706',
+  'Truck': '#475569',
+  'Bike': '#0f766e',
+  'Ambulance': '#dc2626',
+  'Fire Engine': '#b91c1c',
+  'Police Vehicle': '#334155'
 };
 
 // DOM Ready
@@ -53,13 +52,12 @@ async function fetchSimulationState() {
     const data = await response.json();
     state.lastState = data;
 
-    renderStatusAndTelemetry(data);
+    renderSimulationControls(data);
     renderIntersectionSignals(data);
     renderIntersectionVehicles(data);
     renderStatistics(data.statistics);
     renderDirectionalQueues(data.queues);
     renderCircularQueueVisualizer(data.queues[state.selectedVisualizerQueue]);
-    renderEvents(data.recent_events);
   } catch (err) {
     console.warn('Simulation state poll error:', err.message);
   }
@@ -68,35 +66,13 @@ async function fetchSimulationState() {
 // ---------------------------------------------------------------------------
 // Telemetry & Header Rendering
 // ---------------------------------------------------------------------------
-function renderStatusAndTelemetry(data) {
-  const badge = document.getElementById('status-badge');
-  const statusText = document.getElementById('status-text');
+function renderSimulationControls(data) {
   const status = data.status || 'STOPPED';
-
-  statusText.textContent = status;
-  badge.className = `nav-status-badge status-${status.toLowerCase()}`;
-
-  // Time formatting
-  const mins = String(Math.floor(data.sim_time / 60)).padStart(2, '0');
-  const secs = String(data.sim_time % 60).padStart(2, '0');
-  document.getElementById('telemetry-time').textContent = `${mins}:${secs}`;
-
-  document.getElementById('telemetry-direction').textContent = data.active_direction;
-  
-  const phaseEl = document.getElementById('telemetry-phase');
-  phaseEl.textContent = `${data.current_phase} (${data.remaining_phase_time}s)`;
-  if (data.current_phase === 'GREEN') {
-    phaseEl.style.color = '#34d399';
-  } else if (data.current_phase === 'YELLOW') {
-    phaseEl.style.color = '#facc15';
-  } else {
-    phaseEl.style.color = '#f87171';
-  }
 
   // Button states
   document.getElementById('btn-start').disabled = (status === 'RUNNING');
   document.getElementById('btn-pause').disabled = (status !== 'RUNNING');
-  document.getElementById('btn-resume').disabled = (status !== 'PAUSED');
+  document.getElementById('btn-start').lastChild.textContent = status === 'PAUSED' ? 'Resume' : 'Start';
 }
 
 // ---------------------------------------------------------------------------
@@ -108,16 +84,6 @@ function renderStatistics(stats) {
   document.getElementById('stat-total-waiting').textContent = stats.total_waiting;
   document.getElementById('stat-total-served').textContent = stats.total_served;
   document.getElementById('stat-avg-wait').textContent = `${stats.average_waiting_time}s`;
-  document.getElementById('stat-throughput').textContent = `${stats.traffic_throughput_per_min}/m`;
-  
-  const emgCard = document.getElementById('stat-card-emergency');
-  const emgVal = document.getElementById('stat-emergency-count');
-  emgVal.textContent = stats.emergency_waiting;
-  if (stats.emergency_waiting > 0) {
-    emgCard.classList.add('stat-emergency');
-  } else {
-    emgCard.classList.remove('stat-emergency');
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +109,30 @@ function renderIntersectionSignals(data) {
     else if (color === 'YELLOW') yBulb.classList.add('active');
     else rBulb.classList.add('active');
 
-    // Update approach queue badge count
-    const qCountBadge = document.getElementById(`approach-count-${dir.toLowerCase()}`);
-    if (qCountBadge && data.queues && data.queues[dir]) {
-      qCountBadge.textContent = `${data.queues[dir].size}/${data.queues[dir].capacity}`;
-    }
   });
+}
+
+function vehicleArtwork(vehicle) {
+  const color = VEHICLE_COLORS[vehicle.type] || VEHICLE_COLORS.Car;
+  const isBike = vehicle.type === 'Bike';
+  const isLarge = vehicle.type === 'Bus' || vehicle.type === 'Truck' || vehicle.type === 'Fire Engine';
+  const body = isBike
+    ? '<path d="M20 10h8l4 12-4 42h-8l-4-42z"/>'
+    : isLarge
+      ? '<rect x="9" y="5" width="30" height="66" rx="5"/><rect x="14" y="10" width="20" height="28" rx="2" fill="#cbd5e1"/><rect x="14" y="44" width="20" height="20" rx="2" fill="#e2e8f0"/>'
+      : '<path d="M15 5h18l7 13v39l-7 14H15L8 57V18z"/><path d="M15 22q1-5 6-5h6q5 0 6 5l3 12H12z" fill="#bfdbfe"/><path d="M13 49h22l-4 10H17z" fill="#dbeafe"/>';
+  const emergencyMark = vehicle.is_emergency
+    ? '<path d="M21 39h6v-5h5v5h5v6h-5v5h-5v-5h-6z" fill="#fff"/>'
+    : '';
+  return `<svg class="vehicle-art" viewBox="0 0 48 76" aria-hidden="true">
+    <rect x="4" y="18" width="5" height="14" rx="2" fill="#1e293b"/>
+    <rect x="39" y="18" width="5" height="14" rx="2" fill="#1e293b"/>
+    <rect x="4" y="48" width="5" height="14" rx="2" fill="#1e293b"/>
+    <rect x="39" y="48" width="5" height="14" rx="2" fill="#1e293b"/>
+    <g fill="${color}" stroke="#fff" stroke-opacity=".8" stroke-width="1.5">${body}</g>
+    ${emergencyMark}
+    <circle cx="17" cy="9" r="2" fill="#fde68a"/><circle cx="31" cy="9" r="2" fill="#fde68a"/>
+  </svg>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,8 +145,8 @@ function animateVehicleCrossing(vehicle) {
   const dir = vehicle.direction;
   const chip = document.createElement('div');
   chip.className = `vehicle-crossing-chip dir-${dir.toLowerCase()} ${vehicle.is_emergency ? 'emergency' : ''}`;
-  const icon = VEHICLE_ICONS[vehicle.type] || '🚗';
-  chip.innerHTML = `<span>${icon}</span> <span>${vehicle.id}</span>`;
+  chip.innerHTML = vehicleArtwork(vehicle);
+  chip.title = `${vehicle.type} (${vehicle.id})`;
 
   crossingLayer.appendChild(chip);
 
@@ -215,13 +199,13 @@ function renderIntersectionVehicles(data) {
       return;
     }
 
-    const createChip = (v, queueIndex) => {
+    const createChip = v => {
       const chip = document.createElement('div');
       chip.className = `vehicle-mini-chip ${v.is_emergency ? 'emergency' : ''}`;
       chip.setAttribute('data-id', v.id);
-      chip.title = `${v.type} (${v.id}) — Queue Pos: #${queueIndex + 1}`;
-      const icon = VEHICLE_ICONS[v.type] || '🚗';
-      chip.innerHTML = `<span>${icon}</span> <span>${v.id}</span> <span class="chip-pos">#${queueIndex + 1}</span>`;
+      chip.title = `${v.type} (${v.id})`;
+      chip.setAttribute('aria-label', `${v.type} ${v.id}${v.is_emergency ? ', emergency vehicle' : ''}`);
+      chip.innerHTML = vehicleArtwork(v);
       return chip;
     };
 
@@ -234,7 +218,7 @@ function renderIntersectionVehicles(data) {
       laneContainer.appendChild(spacer);
 
       for (let i = fifoVehicles.length - 1; i >= 0; i--) {
-        laneContainer.appendChild(createChip(fifoVehicles[i], i));
+        laneContainer.appendChild(createChip(fifoVehicles[i]));
       }
 
       if (countChanged) {
@@ -246,7 +230,7 @@ function renderIntersectionVehicles(data) {
       // Stop line is at the top of lane-south.
       // Vehicle 1 (fifoVehicles[0]) is nearest to the stop line (at the top).
       for (let i = 0; i < fifoVehicles.length; i++) {
-        laneContainer.appendChild(createChip(fifoVehicles[i], i));
+        laneContainer.appendChild(createChip(fifoVehicles[i]));
       }
       const spacer = document.createElement('div');
       spacer.className = 'lane-spacer';
@@ -261,7 +245,7 @@ function renderIntersectionVehicles(data) {
       // Stop line is at the left of lane-east.
       // Vehicle 1 (fifoVehicles[0]) is nearest to the stop line (at the left).
       for (let i = 0; i < fifoVehicles.length; i++) {
-        laneContainer.appendChild(createChip(fifoVehicles[i], i));
+        laneContainer.appendChild(createChip(fifoVehicles[i]));
       }
       const spacer = document.createElement('div');
       spacer.className = 'lane-spacer';
@@ -280,7 +264,7 @@ function renderIntersectionVehicles(data) {
       laneContainer.appendChild(spacer);
 
       for (let i = fifoVehicles.length - 1; i >= 0; i--) {
-        laneContainer.appendChild(createChip(fifoVehicles[i], i));
+        laneContainer.appendChild(createChip(fifoVehicles[i]));
       }
 
       if (countChanged) {
@@ -296,50 +280,38 @@ function renderIntersectionVehicles(data) {
 function renderDirectionalQueues(queues) {
   if (!queues) return;
 
-  // Update tab counters
-  ['North', 'East', 'South', 'West'].forEach(dir => {
-    const pill = document.getElementById(`tab-pill-${dir.toLowerCase()}`);
-    if (pill && queues[dir]) {
-      pill.textContent = queues[dir].size;
-    }
-  });
-
   const activeQueue = queues[state.activeQueueTab];
   const listContainer = document.getElementById('queue-items-list');
   if (!listContainer || !activeQueue) return;
 
   const items = activeQueue.fifo_items || [];
   if (items.length === 0) {
-    listContainer.innerHTML = `
-      <div class="queue-empty-placeholder">
-        <span>No vehicles currently waiting at ${state.activeQueueTab} approach</span>
-      </div>`;
+    listContainer.innerHTML = '<div class="queue-empty-placeholder">No waiting vehicles</div>';
     return;
   }
 
   listContainer.innerHTML = '';
-  items.forEach((v, index) => {
+  items.forEach(v => {
     const row = document.createElement('div');
     row.className = `queue-item-row ${v.is_emergency ? 'is-emergency' : ''}`;
-
-    const icon = VEHICLE_ICONS[v.type] || '🚗';
-    const waitTime = state.lastState ? Math.max(0, state.lastState.sim_time - v.arrival_time) : 0;
-
-    row.innerHTML = `
-      <div class="queue-item-left">
-        <span class="vehicle-type-badge">${icon}</span>
-        <div>
-          <div class="vehicle-id-tag">${v.id}</div>
-          <div style="font-size:0.72rem; color:var(--text-dim);">${v.type} • Queue Pos: #${index + 1}</div>
-        </div>
-      </div>
-      <div style="text-align:right;">
-        <span class="metric-tag" style="${v.is_emergency ? 'background:rgba(239,68,68,0.2); color:#f87171;' : ''}">
-          ${v.is_emergency ? '🚨 PRIORITY ' + v.priority : 'Normal'}
-        </span>
-        <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">Wait: ${waitTime}s</div>
-      </div>
-    `;
+    const vehicle = document.createElement('span');
+    vehicle.className = `queue-vehicle ${v.is_emergency ? 'emergency' : ''}`;
+    vehicle.innerHTML = vehicleArtwork(v);
+    vehicle.setAttribute('aria-hidden', 'true');
+    const details = document.createElement('div');
+    details.className = 'queue-vehicle-details';
+    const id = document.createElement('strong');
+    id.textContent = v.id;
+    const type = document.createElement('span');
+    type.textContent = v.type;
+    details.append(id, type);
+    row.append(vehicle, details);
+    if (v.is_emergency) {
+      const emergency = document.createElement('span');
+      emergency.className = 'queue-emergency-label';
+      emergency.textContent = 'Emergency';
+      row.appendChild(emergency);
+    }
     listContainer.appendChild(row);
   });
 }
@@ -350,23 +322,15 @@ function renderDirectionalQueues(queues) {
 function renderCircularQueueVisualizer(queueData) {
   if (!queueData) return;
 
-  document.getElementById('dsa-capacity-val').textContent = queueData.capacity;
-  document.getElementById('dsa-size-val').textContent = queueData.size;
   document.getElementById('dsa-front-val').textContent = queueData.front;
   document.getElementById('dsa-rear-val').textContent = queueData.rear;
 
-  // Wrap around detection
+  // Report when the live circular buffer has wrapped.
   const wrapNotice = document.getElementById('wrap-around-notice');
   if (queueData.front > queueData.rear && queueData.rear !== -1) {
-    wrapNotice.style.display = 'flex';
-    wrapNotice.innerHTML = `
-      <span>🔄 <strong>Modulo Wrap-Around Active!</strong> Rear index (<strong>${queueData.rear}</strong>) has wrapped around array capacity (<strong>${queueData.capacity}</strong>) ahead of Front (<strong>${queueData.front}</strong>) via <code>(rear + 1) % ${queueData.capacity}</code>.</span>
-    `;
+    wrapNotice.textContent = 'Circular wrap-around';
   } else {
-    wrapNotice.style.display = 'flex';
-    wrapNotice.innerHTML = `
-      <span>📌 Array Capacity: <strong>${queueData.capacity}</strong> slots. Modulo indexing guarantees <strong>O(1)</strong> enqueue & dequeue without shifting elements.</span>
-    `;
+    wrapNotice.textContent = '';
   }
 
   const grid = document.getElementById('array-slots-grid');
@@ -382,8 +346,7 @@ function renderCircularQueueVisualizer(queueData) {
     if (slot.is_front) pointersHtml += `<span class="pointer-badge pointer-front">▲ FRONT</span>`;
     if (slot.is_rear) pointersHtml += `<span class="pointer-badge pointer-rear">▼ REAR</span>`;
 
-    const icon = slot.item ? (VEHICLE_ICONS[slot.item.type] || '🚗') : '';
-    const label = slot.item ? `${icon} ${slot.item.id}` : '<span style="color:var(--text-dim);">[Empty]</span>';
+    const label = slot.item ? slot.item.id : '';
 
     box.innerHTML = `
       <div class="slot-index-label">Index [${slot.index}]</div>
@@ -393,25 +356,6 @@ function renderCircularQueueVisualizer(queueData) {
       </div>
     `;
     grid.appendChild(box);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Recent Audit Events Log
-// ---------------------------------------------------------------------------
-function renderEvents(events) {
-  const container = document.getElementById('event-feed-container');
-  if (!container || !events) return;
-
-  container.innerHTML = '';
-  events.slice(0, 15).reverse().forEach(evt => {
-    const item = document.createElement('div');
-    item.className = `event-log-item event-${evt.type}`;
-    item.innerHTML = `
-      <span style="font-family:var(--font-mono); color:var(--text-dim); font-size:0.7rem;">[#${evt.cycle || 0}]</span>
-      <span>${evt.message}</span>
-    `;
-    container.appendChild(item);
   });
 }
 
@@ -487,28 +431,16 @@ function renderGraphSVG(graphData, highlightedPath = []) {
     line.setAttribute('y1', u.y);
     line.setAttribute('x2', v.x);
     line.setAttribute('y2', v.y);
-    line.setAttribute('stroke', isPathEdge ? '#38bdf8' : edge.stroke_color);
+    line.setAttribute('stroke', isPathEdge ? '#2563eb' : edge.stroke_color);
     line.setAttribute('stroke-width', isPathEdge ? '5' : '3');
     if (isPathEdge) {
       line.setAttribute('stroke-dasharray', '8,4');
-      line.setAttribute('filter', 'drop-shadow(0 0 8px #0ea5e9)');
+      line.setAttribute('filter', 'drop-shadow(0 0 5px rgba(37, 99, 235, 0.35))');
     } else {
       line.setAttribute('stroke-opacity', '0.75');
     }
     svg.appendChild(line);
 
-    // Edge label (distance & cost)
-    const midX = (u.x + v.x) / 2;
-    const midY = (u.y + v.y) / 2;
-    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text.setAttribute('x', midX);
-    text.setAttribute('y', midY - 6);
-    text.setAttribute('fill', '#94a3b8');
-    text.setAttribute('font-size', '9');
-    text.setAttribute('font-family', 'ui-monospace, monospace');
-    text.setAttribute('text-anchor', 'middle');
-    text.textContent = `${edge.distance_km}km (${edge.congestion_status})`;
-    svg.appendChild(text);
   });
 
   // Draw Nodes (Intersections)
@@ -523,11 +455,11 @@ function renderGraphSVG(graphData, highlightedPath = []) {
     circle.setAttribute('cx', node.x);
     circle.setAttribute('cy', node.y);
     circle.setAttribute('r', isNodeInPath ? '18' : '14');
-    circle.setAttribute('fill', isNodeInPath ? '#0284c7' : '#1e293b');
-    circle.setAttribute('stroke', isNodeInPath ? '#38bdf8' : '#0ea5e9');
+    circle.setAttribute('fill', isNodeInPath ? '#2563eb' : '#ffffff');
+    circle.setAttribute('stroke', isNodeInPath ? '#1d4ed8' : '#64748b');
     circle.setAttribute('stroke-width', isNodeInPath ? '3' : '2');
     if (isNodeInPath) {
-      circle.setAttribute('filter', 'drop-shadow(0 0 10px #38bdf8)');
+      circle.setAttribute('filter', 'drop-shadow(0 2px 4px rgba(37, 99, 235, 0.3))');
     }
     group.appendChild(circle);
 
@@ -535,7 +467,7 @@ function renderGraphSVG(graphData, highlightedPath = []) {
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     text.setAttribute('x', node.x);
     text.setAttribute('y', node.y + 4);
-    text.setAttribute('fill', '#ffffff');
+    text.setAttribute('fill', isNodeInPath ? '#ffffff' : '#172033');
     text.setAttribute('font-size', '9');
     text.setAttribute('font-weight', '700');
     text.setAttribute('font-family', 'ui-monospace, monospace');
@@ -547,7 +479,7 @@ function renderGraphSVG(graphData, highlightedPath = []) {
     const nameText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     nameText.setAttribute('x', node.x);
     nameText.setAttribute('y', node.y + 28);
-    nameText.setAttribute('fill', '#cbd5e1');
+    nameText.setAttribute('fill', '#475569');
     nameText.setAttribute('font-size', '10');
     nameText.setAttribute('font-weight', '600');
     nameText.setAttribute('text-anchor', 'middle');
@@ -567,7 +499,7 @@ async function handleCalculateRoute() {
   const algorithm = document.querySelector('input[name="route-algo"]:checked').value;
   const resultBox = document.getElementById('route-result-container');
 
-  resultBox.innerHTML = '<div style="color:var(--text-muted);">Calculating route...</div>';
+  resultBox.textContent = 'Calculating route...';
 
   try {
     const res = await fetch('/api/graph/route', {
@@ -588,25 +520,12 @@ async function handleCalculateRoute() {
     state.activeRoutePath = data.path;
     renderGraphSVG(state.graphData, data.path);
 
-    const pathSequence = data.path_names.join(' ➔ ');
-    resultBox.innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:0.5rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <strong style="color:#38bdf8; font-size:0.9rem;">${data.algorithm}</strong>
-          <span class="metric-tag">${data.hops} Hops</span>
-        </div>
-        <div style="background:rgba(0,0,0,0.3); padding:0.5rem; border-radius:4px; font-size:0.78rem;">
-          ${pathSequence}
-        </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; font-size:0.75rem;">
-          <div>Distance: <strong>${data.total_distance_km} km</strong></div>
-          <div>Estimated Travel Time: <strong>${data.total_cost_minutes} min</strong></div>
-        </div>
-        <div style="font-size:0.72rem; color:var(--text-muted); font-style:italic;">
-          ${data.explanation}
-        </div>
-      </div>
-    `;
+    const route = document.createElement('p');
+    route.className = 'route-sequence';
+    route.textContent = data.path_names.join(' → ');
+    const distance = document.createElement('strong');
+    distance.textContent = `${data.total_distance_km} km`;
+    resultBox.replaceChildren(route, distance);
   } catch (err) {
     resultBox.innerHTML = `<div style="color:#f87171;">Error: ${err.message}</div>`;
   }
@@ -636,48 +555,26 @@ function renderComparisonTable(data) {
   container.innerHTML = `
     <table class="comparison-table">
       <thead>
-        <tr>
-          <th>Comparison Dimension</th>
-          <th>Queue-Based Scheduling (Micro Layer)</th>
-          <th>Graph-Based Analysis (Macro Layer)</th>
-        </tr>
+        <tr><th></th><th>Circular Queue</th><th>Graph Analysis</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td><strong>Purpose</strong></td>
+          <th scope="row">Purpose</th>
           <td>${q.purpose}</td>
           <td>${g.purpose}</td>
         </tr>
         <tr>
-          <td><strong>Data Structure</strong></td>
-          <td><span class="metric-tag">${q.data_structure}</span></td>
-          <td><span class="metric-tag">${g.data_structure}</span></td>
+          <th scope="row">Structure</th>
+          <td>${q.data_structure}</td>
+          <td>${g.data_structure}</td>
         </tr>
         <tr>
-          <td><strong>Operational Scope</strong></td>
+          <th scope="row">Scope</th>
           <td>${q.operational_scope}</td>
           <td>${g.operational_scope}</td>
         </tr>
-        <tr>
-          <td><strong>Time Complexity</strong></td>
-          <td><code>${q.time_complexity}</code></td>
-          <td><code>${g.time_complexity}</code></td>
-        </tr>
-        <tr>
-          <td><strong>Space Complexity</strong></td>
-          <td><code>${q.space_complexity}</code></td>
-          <td><code>${g.space_complexity}</code></td>
-        </tr>
-        <tr>
-          <td><strong>Live Evaluation Metrics</strong></td>
-          <td>Total Served: <strong>${q.current_live_metrics.total_served}</strong> | Avg Wait: <strong>${q.current_live_metrics.avg_waiting_time_sec}s</strong></td>
-          <td>Intersections: <strong>${g.current_live_metrics.total_intersections}</strong> | Congestion: <strong>${g.current_live_metrics.city_congestion_score}</strong></td>
-        </tr>
       </tbody>
     </table>
-    <div style="margin-top:0.75rem; font-size:0.78rem; color:var(--text-muted); font-style:italic;">
-      💡 ${data.educational_synthesis}
-    </div>
   `;
 }
 
@@ -686,27 +583,19 @@ function renderComparisonTable(data) {
 // ---------------------------------------------------------------------------
 function initEventListeners() {
   // Simulation Controls
-  document.getElementById('btn-start').addEventListener('click', () => postAction('/api/simulation/start'));
+  document.getElementById('btn-start').addEventListener('click', () => {
+    const endpoint = state.lastState && state.lastState.status === 'PAUSED'
+      ? '/api/simulation/resume'
+      : '/api/simulation/start';
+    postAction(endpoint);
+  });
   document.getElementById('btn-pause').addEventListener('click', () => postAction('/api/simulation/pause'));
-  document.getElementById('btn-resume').addEventListener('click', () => postAction('/api/simulation/resume'));
   document.getElementById('btn-reset').addEventListener('click', async () => {
     await postAction('/api/simulation/reset');
     state.animatedDepartedIds.clear();
     state.prevQueueCounts = {};
     const layer = document.getElementById('intersection-crossing-layer');
     if (layer) layer.innerHTML = '';
-  });
-  document.getElementById('btn-step').addEventListener('click', () => postAction('/api/simulation/step', { dt: 1 }));
-  document.getElementById('btn-batch-add').addEventListener('click', () => postAction('/api/vehicles/batch', { count: 4 }));
-
-  // Quick Approach Buttons
-  document.querySelectorAll('.approach-btn-mini').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const dir = e.target.getAttribute('data-dir');
-      const isEmg = e.target.getAttribute('data-emg') === 'true';
-      const type = isEmg ? 'Ambulance' : 'Car';
-      postAction('/api/vehicles/add', { direction: dir, vehicle_type: type });
-    });
   });
 
   // Manual Dispatcher Form
@@ -718,6 +607,34 @@ function initEventListeners() {
       postAction('/api/vehicles/add', { direction: dir, vehicle_type: type });
     });
   }
+
+  const emergencyBtn = document.getElementById('btn-dispatch-emergency');
+  if (emergencyBtn) {
+    emergencyBtn.addEventListener('click', () => {
+      const direction = document.getElementById('dispatch-direction-select').value;
+      postAction('/api/vehicles/add', {
+        direction,
+        vehicle_type: 'Ambulance'
+      });
+    });
+  }
+
+  document.querySelectorAll('.dashboard-tab').forEach(tab => {
+    tab.addEventListener('click', () => activateDashboardTab(tab));
+    tab.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = Array.from(document.querySelectorAll('.dashboard-tab'));
+      const index = tabs.indexOf(tab);
+      const nextIndex = event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? tabs.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+      activateDashboardTab(tabs[nextIndex]);
+      tabs[nextIndex].focus();
+    });
+  });
 
   // Queue Direction Tabs
   document.querySelectorAll('.queue-tab-btn').forEach(btn => {
@@ -747,32 +664,21 @@ function initEventListeners() {
     calcRouteBtn.addEventListener('click', handleCalculateRoute);
   }
 
-  // Settings Modal Handlers
-  const configBtn = document.getElementById('btn-open-config');
-  const modal = document.getElementById('config-modal');
-  const closeBtn = document.getElementById('btn-close-config');
-  const saveConfigBtn = document.getElementById('btn-save-config');
+}
 
-  if (configBtn && modal) {
-    configBtn.addEventListener('click', () => modal.classList.add('open'));
-    closeBtn.addEventListener('click', () => modal.classList.remove('open'));
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) modal.classList.remove('open');
-    });
+function activateDashboardTab(activeTab) {
+  const activePanelId = activeTab.getAttribute('aria-controls');
 
-    saveConfigBtn.addEventListener('click', async () => {
-      const green = parseInt(document.getElementById('input-green-duration').value, 10);
-      const yellow = parseInt(document.getElementById('input-yellow-duration').value, 10);
-      const strategy = document.getElementById('input-strategy-select').value;
+  document.querySelectorAll('.dashboard-tab').forEach(tab => {
+    const selected = tab === activeTab;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
 
-      await postAction('/api/simulation/config', {
-        green_duration: green,
-        yellow_duration: yellow,
-        strategy: strategy
-      });
-      modal.classList.remove('open');
-    });
-  }
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    panel.hidden = panel.id !== activePanelId;
+  });
 }
 
 async function postAction(endpoint, payload = {}) {
