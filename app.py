@@ -7,6 +7,7 @@ Backend Stack: Python 3, Flask, REST APIs, Pure DSA Modules
 
 import os
 from flask import Flask, jsonify, request, render_template
+from algorithms.circular_queue import QueueUnderflowError
 from algorithms.simulation import TrafficSimulationManager
 from algorithms.signal_scheduler import DIRECTIONS
 
@@ -140,7 +141,10 @@ def add_vehicle():
     direction = data.get("direction")
     vehicle_type = data.get("vehicle_type", "Car")
     is_emergency = bool(data.get("is_emergency", False))
-    priority = int(data.get("priority", 0))
+    try:
+        priority = int(data.get("priority", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Priority must be an integer."}), 400
 
     if not direction or direction not in DIRECTIONS:
         return jsonify({
@@ -197,6 +201,75 @@ def add_vehicle_batch():
     }), 201
 
 
+@app.route("/api/queues/<direction>/dequeue", methods=["POST"])
+def dequeue_vehicle(direction):
+    """Remove and return the front vehicle from the shared directional queue."""
+    if direction not in DIRECTIONS:
+        return jsonify({"error": f"Invalid direction '{direction}'. Valid options: {DIRECTIONS}."}), 400
+
+    with simulation.lock:
+        queue = simulation.queues[direction]
+        try:
+            vehicle = queue.dequeue()
+        except QueueUnderflowError as error:
+            return jsonify({"error": str(error)}), 400
+
+        simulation.scheduler.log_event(
+            "VEHICLE_REMOVED",
+            f"Vehicle {vehicle['id']} was dequeued from the {direction} queue.",
+            {"vehicle_id": vehicle["id"], "direction": direction}
+        )
+        simulation.scheduler.update_emergency_priority(simulation.queues, simulation.sim_time)
+        return jsonify({
+            "success": True,
+            "message": f"Dequeued {vehicle['id']} from the {direction} queue.",
+            "vehicle": vehicle,
+            "state": simulation.get_complete_state()
+        }), 200
+
+
+@app.route("/api/queues/<direction>/peek", methods=["POST"])
+def peek_vehicle(direction):
+    """Return the front vehicle from the shared directional queue without removing it."""
+    if direction not in DIRECTIONS:
+        return jsonify({"error": f"Invalid direction '{direction}'. Valid options: {DIRECTIONS}."}), 400
+
+    with simulation.lock:
+        try:
+            vehicle = simulation.queues[direction].peek()
+        except QueueUnderflowError as error:
+            return jsonify({"error": str(error)}), 400
+        return jsonify({
+            "success": True,
+            "message": f"Front vehicle is {vehicle['id']} ({vehicle['type']}).",
+            "vehicle": vehicle
+        }), 200
+
+
+@app.route("/api/queues/<direction>/clear", methods=["POST"])
+def clear_queue(direction):
+    """Clear a directional circular queue without changing the served-vehicle count."""
+    if direction not in DIRECTIONS:
+        return jsonify({"error": f"Invalid direction '{direction}'. Valid options: {DIRECTIONS}."}), 400
+
+    with simulation.lock:
+        queue = simulation.queues[direction]
+        removed_count = len(queue)
+        queue.clear()
+        simulation.scheduler.update_emergency_priority(simulation.queues, simulation.sim_time)
+        simulation.scheduler.log_event(
+            "QUEUE_CLEARED",
+            f"Cleared {removed_count} waiting vehicle(s) from the {direction} queue.",
+            {"direction": direction, "removed_count": removed_count}
+        )
+        return jsonify({
+            "success": True,
+            "message": f"Cleared {removed_count} vehicle(s) from the {direction} queue.",
+            "removed_count": removed_count,
+            "state": simulation.get_complete_state()
+        }), 200
+
+
 # -------------------------------------------------------------------------
 # Queues & Analytics Endpoints
 # -------------------------------------------------------------------------
@@ -231,7 +304,24 @@ def get_analytics():
 @app.route("/api/graph", methods=["GET"])
 def get_graph():
     """Return city road graph vertices, edges, congestion levels, and connectivity."""
-    return jsonify(simulation.graph.export_graph_data()), 200
+    with simulation.lock:
+        graph_data = simulation.graph.export_graph_data()
+    return jsonify(graph_data), 200
+
+
+@app.route("/api/graph/bfs", methods=["POST"])
+def run_graph_bfs():
+    """Run a complete BFS traversal without changing simulation state."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"found": False, "error": "Request body must be a JSON object."}), 400
+    source = data.get("source")
+    if not isinstance(source, str) or not source:
+        return jsonify({"found": False, "error": "A starting intersection is required."}), 400
+
+    with simulation.lock:
+        result = simulation.graph.bfs_traversal(source)
+    return jsonify(result), 200 if result.get("found") else 404
 
 
 @app.route("/api/graph/route", methods=["POST"])
@@ -252,8 +342,10 @@ def get_graph_route():
 
     if algorithm == "dijkstra":
         result = simulation.graph.dijkstra_shortest_path(source, destination)
-    else:
+    elif algorithm == "bfs":
         result = simulation.graph.bfs_shortest_path(source, destination)
+    else:
+        return jsonify({"error": "Algorithm must be 'bfs' or 'dijkstra'."}), 400
 
     status_code = 200 if result.get("found", False) else 404
     return jsonify(result), status_code
@@ -265,10 +357,13 @@ def get_graph_route():
 @app.route("/api/comparison", methods=["GET"])
 def get_comparison():
     """
-    Return comprehensive comparison data between Queue-Based Scheduling
-    and Graph-Based Network Analysis.
+    Return implementation details and a live snapshot of queue and graph analytics.
     """
-    return jsonify(simulation.run_experimental_comparison()), 200
+    source = request.args.get("source")
+    destination = request.args.get("destination")
+    with simulation.lock:
+        result = simulation.run_experimental_comparison(source, destination)
+    return jsonify(result), 200
 
 
 @app.route("/api/events", methods=["GET"])

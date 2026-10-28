@@ -140,6 +140,74 @@ class TrafficGraph:
                 if edge.to_node == to_node:
                     edge.current_vehicles = max(0, edge.current_vehicles + vehicles_delta)
 
+    def _bfs_explore(
+        self,
+        start_id: str,
+        target_id: Optional[str] = None,
+        include_steps: bool = True
+    ) -> Tuple[List[str], Dict[str, Tuple[Optional[str], Optional[RoadEdge]]], List[Dict[str, Any]]]:
+        """Run BFS once, optionally stopping at a target and recording a traversal trace."""
+        queue = deque([start_id])
+        visited = {start_id}
+        parent: Dict[str, Tuple[Optional[str], Optional[RoadEdge]]] = {start_id: (None, None)}
+        traversal_order = []
+        steps = []
+
+        while queue:
+            curr = queue.popleft()
+            traversal_order.append(curr)
+            discovered = []
+
+            if curr != target_id:
+                for edge in self.adjacency.get(curr, []):
+                    neighbor = edge.to_node
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        parent[neighbor] = (curr, edge)
+                        queue.append(neighbor)
+                        discovered.append(neighbor)
+
+            if include_steps:
+                steps.append({
+                    "current": curr,
+                    "newly_discovered": discovered,
+                    "queue": list(queue),
+                    "traversal_order": list(traversal_order)
+                })
+
+            if curr == target_id:
+                break
+
+        return traversal_order, parent, steps
+
+    def bfs_traversal(self, start_id: str) -> Dict[str, Any]:
+        """Return a complete, stepwise BFS traversal from one intersection."""
+        if start_id not in self.nodes:
+            return {
+                "found": False,
+                "error": f"Intersection ID '{start_id}' does not exist."
+            }
+
+        traversal_order, _, steps = self._bfs_explore(start_id)
+        reachable = set(traversal_order)
+        unreachable = [node_id for node_id in self.nodes if node_id not in reachable]
+        return {
+            "found": True,
+            "algorithm": "Breadth-First Search (BFS)",
+            "start": start_id,
+            "start_name": self.nodes[start_id].name,
+            "traversal_order": traversal_order,
+            "traversal_names": [self.nodes[node_id].name for node_id in traversal_order],
+            "reachable": traversal_order,
+            "reachable_names": [self.nodes[node_id].name for node_id in traversal_order],
+            "unreachable": unreachable,
+            "unreachable_names": [self.nodes[node_id].name for node_id in unreachable],
+            "vertices_visited": len(traversal_order),
+            "total_vertices": len(self.nodes),
+            "is_fully_reachable": not unreachable,
+            "steps": steps
+        }
+
     def bfs_shortest_path(self, start_id: str, target_id: str) -> Dict[str, Any]:
         """
         Breadth-First Search (BFS) to find the path with the minimum number of intersections (hops).
@@ -168,24 +236,7 @@ class TrafficGraph:
                 "explanation": "Origin and destination are identical."
             }
 
-        queue = deque([start_id])
-        visited = {start_id}
-        parent: Dict[str, Tuple[Optional[str], Optional[RoadEdge]]] = {start_id: (None, None)}
-        traversal_order = []
-
-        while queue:
-            curr = queue.popleft()
-            traversal_order.append(curr)
-
-            if curr == target_id:
-                break
-
-            for edge in self.adjacency.get(curr, []):
-                neighbor = edge.to_node
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    parent[neighbor] = (curr, edge)
-                    queue.append(neighbor)
+        traversal_order, parent, _ = self._bfs_explore(start_id, target_id, include_steps=False)
 
         if target_id not in parent or parent[target_id][0] is None and start_id != target_id:
             return {

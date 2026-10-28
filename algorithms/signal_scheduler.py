@@ -29,6 +29,13 @@ class SchedulingStrategy(Enum):
     ADAPTIVE_PRIORITY = "adaptive_priority"
 
 
+class EmergencyPriorityState(Enum):
+    NORMAL = "NORMAL"
+    EMERGENCY_PREPARATION = "EMERGENCY_PREPARATION"
+    EMERGENCY_ACTIVE = "EMERGENCY_ACTIVE"
+    RESUME_NORMAL = "RESUME_NORMAL"
+
+
 DIRECTIONS = ["North", "East", "South", "West"]
 
 # Opposite / Conflicting mapping:
@@ -59,6 +66,9 @@ class SignalScheduler:
         self.current_phase: SignalState = SignalState.GREEN
         self.phase_elapsed_time: int = 0
         self.total_cycle_count: int = 0
+        self.priority_state = EmergencyPriorityState.NORMAL
+        self.emergency_direction: Optional[str] = None
+        self.emergency_vehicle_id: Optional[str] = None
 
         # Starvation tracking
         self.emergency_streak_count: Dict[str, int] = {d: 0 for d in DIRECTIONS}
@@ -112,6 +122,100 @@ class SignalScheduler:
         if len(self.event_log) > 100:
             self.event_log.pop(0)
 
+    @staticmethod
+    def _find_emergency_vehicles(
+        queues: Dict[str, CircularQueue],
+        current_sim_time: int = 0
+    ) -> List[Tuple[int, int, str, str]]:
+        """Return waiting emergencies ordered by arrival time, then generated ID."""
+        candidates = []
+        insertion_order = 0
+        for direction in DIRECTIONS:
+            for vehicle in queues[direction].get_fifo_items():
+                vehicle_type = str(vehicle.get("type", vehicle.get("vehicle_type", ""))).casefold()
+                if vehicle.get("is_emergency", False) or vehicle_type == "ambulance":
+                    try:
+                        arrival_time = int(vehicle.get("arrival_time", current_sim_time))
+                    except (TypeError, ValueError):
+                        arrival_time = current_sim_time
+                    vehicle_id = str(vehicle.get("id", ""))
+                    id_suffix = vehicle_id.rsplit("-", 1)[-1]
+                    try:
+                        sequence = int(id_suffix)
+                    except ValueError:
+                        sequence = insertion_order
+                    candidates.append((arrival_time, sequence, direction, vehicle_id))
+                insertion_order += 1
+        return sorted(candidates)
+
+    def update_emergency_priority(
+        self,
+        queues: Dict[str, CircularQueue],
+        current_sim_time: int = 0
+    ) -> None:
+        """Refresh emergency state immediately after a queue change or vehicle departure."""
+        candidates = self._find_emergency_vehicles(queues, current_sim_time)
+        if not candidates:
+            if self.priority_state in (
+                EmergencyPriorityState.EMERGENCY_PREPARATION,
+                EmergencyPriorityState.EMERGENCY_ACTIVE
+            ):
+                self.priority_state = EmergencyPriorityState.RESUME_NORMAL
+                self.phase_elapsed_time = 0
+                self.log_event(
+                    "EMERGENCY_CLEARED",
+                    "Emergency vehicle cleared; normal scheduling will resume.",
+                    {"direction": self.emergency_direction, "vehicle_id": self.emergency_vehicle_id}
+                )
+            return
+
+        selected = next(
+            (candidate for candidate in candidates if candidate[3] == self.emergency_vehicle_id),
+            None
+        ) if self.priority_state == EmergencyPriorityState.EMERGENCY_ACTIVE else None
+        if selected is None:
+            selected = candidates[0]
+        _, _, direction, vehicle_id = selected
+
+        if (
+            self.priority_state == EmergencyPriorityState.EMERGENCY_ACTIVE
+            and direction == self.emergency_direction
+            and vehicle_id == self.emergency_vehicle_id
+        ):
+            return
+
+        previous_state = self.priority_state
+        self.emergency_direction = direction
+        self.emergency_vehicle_id = vehicle_id
+
+        if (
+            self.current_phase == SignalState.GREEN
+            and self.active_direction == direction
+            and previous_state != EmergencyPriorityState.EMERGENCY_PREPARATION
+        ):
+            self.priority_state = EmergencyPriorityState.EMERGENCY_ACTIVE
+            if previous_state != EmergencyPriorityState.EMERGENCY_ACTIVE:
+                self.phase_elapsed_time = 0
+                self.log_event(
+                    "EMERGENCY_ACTIVE",
+                    f"Emergency vehicle {vehicle_id} has priority at {direction}.",
+                    {"direction": direction, "vehicle_id": vehicle_id}
+                )
+            return
+
+        if previous_state != EmergencyPriorityState.EMERGENCY_PREPARATION:
+            if self.current_phase == SignalState.GREEN:
+                # Departures are atomic per simulation tick; this yellow interval
+                # is the available all-clear because in-junction occupancy is not modeled.
+                self.current_phase = SignalState.YELLOW
+                self.phase_elapsed_time = 0
+            self.priority_state = EmergencyPriorityState.EMERGENCY_PREPARATION
+            self.log_event(
+                "EMERGENCY_PREPARATION",
+                f"Emergency vehicle detected at {direction}; clearing the current approach.",
+                {"direction": direction, "vehicle_id": vehicle_id}
+            )
+
     def select_next_direction(
         self,
         queues: Dict[str, CircularQueue],
@@ -127,65 +231,24 @@ class SignalScheduler:
         curr_idx = DIRECTIONS.index(self.active_direction)
         rr_next = DIRECTIONS[(curr_idx + 1) % len(DIRECTIONS)]
 
-        if self.strategy == SchedulingStrategy.ROUND_ROBIN:
-            self.emergency_streak_count[rr_next] = 0
-            return rr_next, "Round-robin scheduled switch"
-
-        # Adaptive Priority Mode
-        # Step 1: Scan for waiting emergency vehicles
-        emergency_candidates = []
-        for direction in DIRECTIONS:
-            q = queues[direction]
-            if not q.is_empty():
-                fifo_items = q.get_fifo_items()
-                for item in fifo_items:
-                    if item.get("is_emergency", False):
-                        priority = item.get("priority", 3)
-                        arrival = item.get("arrival_time", current_sim_time)
-                        emergency_candidates.append((direction, priority, arrival))
-                        break
-
+        emergency_candidates = self._find_emergency_vehicles(queues, current_sim_time)
         if emergency_candidates:
-            # Sort by priority (ascending: 1 = Ambulance, 2 = Fire Engine, 3 = Police) then arrival
-            emergency_candidates.sort(key=lambda x: (x[1], x[2]))
-            target_dir = emergency_candidates[0][0]
-
-            # Starvation prevention check:
-            # If target direction has already received consecutive emergency extensions
-            # and another non-empty direction has waited too long, grant service to avoid total starvation.
-            if self.emergency_streak_count[target_dir] >= self.max_emergency_consecutive:
-                # Find most starved waiting non-emergency queue
-                starved_dir = None
-                max_starve_time = -1
-                for d in DIRECTIONS:
-                    if d != target_dir and not queues[d].is_empty():
-                        oldest_veh = queues[d].peek()
-                        wait = current_sim_time - oldest_veh.get("arrival_time", current_sim_time)
-                        if wait > max_starve_time:
-                            max_starve_time = wait
-                            starved_dir = d
-
-                if starved_dir and max_starve_time > 15:
-                    self.emergency_streak_count[target_dir] = 0
-                    self.log_event(
-                        "STARVATION_PREVENTION",
-                        f"Normal traffic at {starved_dir} given green to prevent indefinite starvation after emergency priority.",
-                        {"starved_direction": starved_dir, "wait_time": max_starve_time}
-                    )
-                    return starved_dir, f"Starvation prevention override for {starved_dir}"
-
+            _, _, target_dir, vehicle_id = emergency_candidates[0]
             self.emergency_streak_count[target_dir] += 1
-            # Reset other directions streak
             for d in DIRECTIONS:
                 if d != target_dir:
                     self.emergency_streak_count[d] = 0
 
             self.log_event(
                 "EMERGENCY_PRIORITY",
-                f"Emergency vehicle detected at {target_dir}! Prioritizing green phase.",
-                {"direction": target_dir, "streak": self.emergency_streak_count[target_dir]}
+                f"Emergency vehicle detected at {target_dir}; prioritizing its approach.",
+                {"direction": target_dir, "vehicle_id": vehicle_id}
             )
             return target_dir, f"Emergency vehicle priority at {target_dir}"
+
+        if self.strategy == SchedulingStrategy.ROUND_ROBIN:
+            self.emergency_streak_count[rr_next] = 0
+            return rr_next, "Round-robin scheduled switch"
 
         # Reset emergency streak counts
         for d in DIRECTIONS:
@@ -227,9 +290,43 @@ class SignalScheduler:
         Advance scheduler clock by dt seconds.
         Manages GREEN -> YELLOW -> switch direction transitions safely.
         """
+        self.update_emergency_priority(queues, current_sim_time)
+        if self.priority_state == EmergencyPriorityState.RESUME_NORMAL:
+            self.priority_state = EmergencyPriorityState.NORMAL
+            self.emergency_direction = None
+            self.emergency_vehicle_id = None
+            self.log_event("NORMAL_RESUMED", "Normal signal scheduling resumed.", {})
+
         self.phase_elapsed_time += dt
         transition_occurred = False
         action_note = "Normal phase progression"
+
+        if self.priority_state == EmergencyPriorityState.EMERGENCY_PREPARATION:
+            if self.phase_elapsed_time >= self.yellow_duration:
+                emergency_candidates = self._find_emergency_vehicles(queues, current_sim_time)
+                if emergency_candidates:
+                    _, _, direction, vehicle_id = next(
+                        (candidate for candidate in emergency_candidates
+                         if candidate[3] == self.emergency_vehicle_id),
+                        emergency_candidates[0]
+                    )
+                    self.active_direction = direction
+                    self.emergency_direction = direction
+                    self.emergency_vehicle_id = vehicle_id
+                    self.current_phase = SignalState.GREEN
+                    self.phase_elapsed_time = 0
+                    self.priority_state = EmergencyPriorityState.EMERGENCY_ACTIVE
+                    transition_occurred = True
+                    action_note = f"Emergency approach {direction} granted GREEN."
+                    self.log_event(
+                        "EMERGENCY_ACTIVE",
+                        f"Emergency vehicle {vehicle_id} granted priority at {direction}.",
+                        {"direction": direction, "vehicle_id": vehicle_id}
+                    )
+            return self._step_result(transition_occurred, action_note)
+
+        if self.priority_state == EmergencyPriorityState.EMERGENCY_ACTIVE:
+            return self._step_result(transition_occurred, "Emergency approach retains GREEN priority.")
 
         if self.current_phase == SignalState.GREEN:
             # Check if green phase has elapsed
@@ -264,11 +361,17 @@ class SignalScheduler:
                     "reason": reason
                 })
 
+        return self._step_result(transition_occurred, action_note)
+
+    def _step_result(self, transition_occurred: bool, action_note: str) -> Dict[str, Any]:
         return {
             "active_direction": self.active_direction,
             "current_phase": self.current_phase.value,
             "phase_elapsed_time": self.phase_elapsed_time,
             "signals": self.get_signal_states(),
+            "priority_state": self.priority_state.value,
+            "emergency_direction": self.emergency_direction,
+            "emergency_vehicle_id": self.emergency_vehicle_id,
             "transition_occurred": transition_occurred,
             "action_note": action_note
         }
@@ -279,6 +382,9 @@ class SignalScheduler:
         self.current_phase = SignalState.GREEN
         self.phase_elapsed_time = 0
         self.total_cycle_count = 0
+        self.priority_state = EmergencyPriorityState.NORMAL
+        self.emergency_direction = None
+        self.emergency_vehicle_id = None
         self.emergency_streak_count = {d: 0 for d in DIRECTIONS}
         self.direction_last_served_step = {d: 0 for d in DIRECTIONS}
         self.event_log.clear()
@@ -293,13 +399,18 @@ class SignalScheduler:
             "green_duration": self.green_duration,
             "yellow_duration": self.yellow_duration,
             "remaining_phase_time": (
-                (self.green_duration - self.phase_elapsed_time)
+                None
+                if self.priority_state == EmergencyPriorityState.EMERGENCY_ACTIVE
+                else max(0, self.green_duration - self.phase_elapsed_time)
                 if self.current_phase == SignalState.GREEN
-                else (self.yellow_duration - self.phase_elapsed_time)
+                else max(0, self.yellow_duration - self.phase_elapsed_time)
             ),
             "strategy": self.strategy.value,
             "total_cycles": self.total_cycle_count,
             "signals": self.get_signal_states(),
+            "priority_state": self.priority_state.value,
+            "emergency_direction": self.emergency_direction,
+            "emergency_vehicle_id": self.emergency_vehicle_id,
             "emergency_streaks": self.emergency_streak_count,
             "recent_events": self.event_log[-15:]
         }

@@ -13,9 +13,16 @@ const state = {
   selectedVisualizerQueue: 'North',
   graphData: null,
   activeRoutePath: [],
+  selectedBfsStart: null,
+  bfsResult: null,
+  bfsStepIndex: -1,
+  bfsTimer: null,
+  bfsPlaying: false,
   animatedDepartedIds: new Set(),
   isInitialLoad: true,
-  prevQueueCounts: {}
+  prevQueueCounts: {},
+  notificationTimeout: null,
+  comparisonInterval: null
 };
 
 const VEHICLE_COLORS = {
@@ -32,7 +39,7 @@ const VEHICLE_COLORS = {
 document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
   fetchInitialGraph();
-  fetchComparisonData();
+  state.comparisonInterval = setInterval(fetchComparisonData, 2500);
   startPolling();
 });
 
@@ -72,7 +79,37 @@ function renderSimulationControls(data) {
   // Button states
   document.getElementById('btn-start').disabled = (status === 'RUNNING');
   document.getElementById('btn-pause').disabled = (status !== 'RUNNING');
-  document.getElementById('btn-start').lastChild.textContent = status === 'PAUSED' ? 'Resume' : 'Start';
+  document.getElementById('btn-start').lastChild.textContent =
+    status === 'PAUSED' ? ' Resume Simulation' : ' Start Simulation';
+  document.getElementById('btn-pause').lastChild.textContent = ' Pause Simulation';
+  const activeDirection = data.active_direction || '—';
+  const phase = data.current_phase || '—';
+  const statusLabel = document.getElementById('intersection-status');
+  const priorityState = data.priority_state || 'NORMAL';
+  const emergencyDirection = data.emergency && data.emergency.direction;
+  statusLabel.classList.toggle(
+    'emergency-state',
+    priorityState !== 'NORMAL' && priorityState !== 'RESUME_NORMAL'
+  );
+  if (priorityState === 'EMERGENCY_PREPARATION') {
+    statusLabel.textContent = `EMERGENCY DETECTED · ${emergencyDirection} · CLEARING`;
+  } else if (priorityState === 'EMERGENCY_ACTIVE') {
+    statusLabel.textContent = `EMERGENCY ACTIVE · ${emergencyDirection} · GREEN`;
+  } else if (priorityState === 'RESUME_NORMAL') {
+    statusLabel.textContent = 'Emergency crossed · normal scheduling resumes';
+  } else {
+    statusLabel.textContent = `${activeDirection} · ${phase} · ${status}`;
+  }
+
+  ['North', 'East', 'South', 'West'].forEach(direction => {
+    const lane = document.getElementById(`lane-${direction.toLowerCase()}`);
+    const fixture = document.getElementById(`light-${direction.toLowerCase()}`);
+    const isEmergencyDirection = direction === emergencyDirection
+      && priorityState !== 'NORMAL'
+      && priorityState !== 'RESUME_NORMAL';
+    lane?.classList.toggle('emergency-approach', isEmergencyDirection);
+    fixture?.classList.toggle('emergency-priority', isEmergencyDirection);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +214,9 @@ function renderIntersectionVehicles(data) {
       if (!state.animatedDepartedIds.has(v.id)) {
         state.animatedDepartedIds.add(v.id);
         animateVehicleCrossing(v);
+        if (v.is_emergency) {
+          showNotification(`${v.type} ${v.id} crossed; normal scheduling is resuming.`, 'success');
+        }
       }
     });
   }
@@ -280,6 +320,11 @@ function renderIntersectionVehicles(data) {
 function renderDirectionalQueues(queues) {
   if (!queues) return;
 
+  document.querySelectorAll('[data-queue-count]').forEach(count => {
+    const direction = count.getAttribute('data-queue-count');
+    count.textContent = queues[direction] ? queues[direction].size : 0;
+  });
+
   const activeQueue = queues[state.activeQueueTab];
   const listContainer = document.getElementById('queue-items-list');
   if (!listContainer || !activeQueue) return;
@@ -324,16 +369,23 @@ function renderCircularQueueVisualizer(queueData) {
 
   document.getElementById('dsa-front-val').textContent = queueData.front;
   document.getElementById('dsa-rear-val').textContent = queueData.rear;
+  document.getElementById('dsa-size-val').textContent =
+    `${queueData.size} / ${queueData.capacity}`;
+  document.getElementById('dsa-status-val').textContent = queueData.is_full
+    ? 'Full'
+    : queueData.is_empty
+      ? 'Empty'
+      : 'Active';
 
-  // Report when the live circular buffer has wrapped.
   const wrapNotice = document.getElementById('wrap-around-notice');
   if (queueData.front > queueData.rear && queueData.rear !== -1) {
-    wrapNotice.textContent = 'Circular wrap-around';
+    wrapNotice.textContent = 'Wrap-around: the rear has looped to an earlier array slot.';
   } else {
     wrapNotice.textContent = '';
   }
 
   const grid = document.getElementById('array-slots-grid');
+  grid.style.gridTemplateColumns = `repeat(${queueData.capacity}, minmax(0, 1fr))`;
   grid.innerHTML = '';
 
   (queueData.slots || []).forEach(slot => {
@@ -371,6 +423,7 @@ async function fetchInitialGraph() {
 
     populateGraphSelects(data.nodes);
     renderGraphSVG(data, state.activeRoutePath);
+    fetchComparisonData();
   } catch (err) {
     console.error('Graph fetch error:', err);
   }
@@ -379,21 +432,27 @@ async function fetchInitialGraph() {
 function populateGraphSelects(nodes) {
   const srcSelect = document.getElementById('route-source-select');
   const dstSelect = document.getElementById('route-target-select');
-  if (!srcSelect || !dstSelect || !nodes) return;
+  const bfsSelect = document.getElementById('bfs-start-select');
+  if (!srcSelect || !dstSelect || !bfsSelect || !nodes) return;
 
   srcSelect.innerHTML = '';
   dstSelect.innerHTML = '';
+  bfsSelect.innerHTML = '';
 
-  nodes.forEach((n, idx) => {
+  nodes.forEach(n => {
     const optSrc = new Option(`${n.id}: ${n.name}`, n.id);
     const optDst = new Option(`${n.id}: ${n.name}`, n.id);
+    const optBfs = new Option(`${n.id}: ${n.name}`, n.id);
     srcSelect.add(optSrc);
     dstSelect.add(optDst);
+    bfsSelect.add(optBfs);
   });
 
-  // Pick interesting default pair: Uptown Hospital (INT-6) to South Ring (INT-4)
-  srcSelect.value = 'INT-6';
-  dstSelect.value = 'INT-4';
+  srcSelect.selectedIndex = 0;
+  dstSelect.selectedIndex = Math.min(1, nodes.length - 1);
+  bfsSelect.selectedIndex = 0;
+  state.selectedBfsStart = bfsSelect.value || null;
+  renderBfsPanel();
 }
 
 function renderGraphSVG(graphData, highlightedPath = []) {
@@ -405,7 +464,19 @@ function renderGraphSVG(graphData, highlightedPath = []) {
   const nodesMap = {};
   graphData.nodes.forEach(n => { nodesMap[n.id] = n; });
 
-  // Draw Edges
+  const showWeights = document.querySelector('input[name="route-algo"]:checked')?.value === 'dijkstra';
+  const currentStep = state.bfsResult?.steps[state.bfsStepIndex];
+  const activeNode = currentStep?.current;
+  const visitedNodes = new Set((currentStep?.traversal_order || []).slice(0, -1));
+  const discoveredNodes = new Set([
+    ...(currentStep?.queue || []),
+    ...(currentStep?.newly_discovered || [])
+  ]);
+  if (state.bfsResult && state.bfsStepIndex >= 0) {
+    discoveredNodes.add(state.bfsResult.start);
+  }
+
+  // Draw edges and, for weighted routing, their current travel-time weights.
   const drawnEdges = new Set();
   (graphData.edges || []).forEach(edge => {
     const pairKey = [edge.from, edge.to].sort().join('--');
@@ -441,24 +512,61 @@ function renderGraphSVG(graphData, highlightedPath = []) {
     }
     svg.appendChild(line);
 
+    if (showWeights) {
+      const weight = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      weight.setAttribute('x', (u.x + v.x) / 2);
+      weight.setAttribute('y', (u.y + v.y) / 2 - 5);
+      weight.setAttribute('fill', '#334155');
+      weight.setAttribute('stroke', '#ffffff');
+      weight.setAttribute('stroke-width', '4');
+      weight.setAttribute('paint-order', 'stroke');
+      weight.setAttribute('font-size', '11');
+      weight.setAttribute('font-weight', '600');
+      weight.setAttribute('text-anchor', 'middle');
+      weight.textContent = `${edge.travel_cost_minutes} min`;
+      svg.appendChild(weight);
+    }
+
   });
 
   // Draw Nodes (Intersections)
   graphData.nodes.forEach(node => {
     const isNodeInPath = highlightedPath.includes(node.id);
+    const isActive = node.id === activeNode;
+    const isVisited = visitedNodes.has(node.id);
+    const isDiscovered = discoveredNodes.has(node.id);
+    const isStart = node.id === (state.bfsResult?.start || state.selectedBfsStart);
+    const fill = isActive ? '#f59e0b'
+      : isVisited || isNodeInPath ? '#2563eb'
+        : isDiscovered ? '#bfdbfe' : '#ffffff';
+    const stroke = isActive ? '#b45309'
+      : isStart ? '#1d4ed8'
+        : isVisited || isNodeInPath ? '#1d4ed8'
+          : isDiscovered ? '#2563eb' : '#64748b';
 
     const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     group.setAttribute('cursor', 'pointer');
+    group.setAttribute('class', `graph-node${isActive ? ' bfs-node-active' : ''}${isVisited ? ' bfs-node-visited' : ''}${isDiscovered ? ' bfs-node-discovered' : ''}${isStart ? ' bfs-node-start' : ''}`);
+    group.setAttribute('tabindex', '0');
+    group.setAttribute('role', 'button');
+    group.setAttribute('aria-label', `${node.name}${isStart ? ', BFS start' : ''}`);
+    group.addEventListener('click', () => selectBfsStart(node.id));
+    group.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectBfsStart(node.id);
+      }
+    });
 
     // Outer glow circle
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     circle.setAttribute('cx', node.x);
     circle.setAttribute('cy', node.y);
-    circle.setAttribute('r', isNodeInPath ? '18' : '14');
-    circle.setAttribute('fill', isNodeInPath ? '#2563eb' : '#ffffff');
-    circle.setAttribute('stroke', isNodeInPath ? '#1d4ed8' : '#64748b');
-    circle.setAttribute('stroke-width', isNodeInPath ? '3' : '2');
-    if (isNodeInPath) {
+    circle.setAttribute('r', isActive || isNodeInPath ? '18' : '14');
+    circle.setAttribute('fill', fill);
+    circle.setAttribute('stroke', stroke);
+    circle.setAttribute('stroke-width', isActive || isStart || isNodeInPath ? '3' : '2');
+    if (isNodeInPath || isActive) {
       circle.setAttribute('filter', 'drop-shadow(0 2px 4px rgba(37, 99, 235, 0.3))');
     }
     group.appendChild(circle);
@@ -467,7 +575,7 @@ function renderGraphSVG(graphData, highlightedPath = []) {
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     text.setAttribute('x', node.x);
     text.setAttribute('y', node.y + 4);
-    text.setAttribute('fill', isNodeInPath ? '#ffffff' : '#172033');
+    text.setAttribute('fill', isActive || isVisited || isNodeInPath ? '#ffffff' : '#172033');
     text.setAttribute('font-size', '9');
     text.setAttribute('font-weight', '700');
     text.setAttribute('font-family', 'ui-monospace, monospace');
@@ -483,11 +591,189 @@ function renderGraphSVG(graphData, highlightedPath = []) {
     nameText.setAttribute('font-size', '10');
     nameText.setAttribute('font-weight', '600');
     nameText.setAttribute('text-anchor', 'middle');
-    nameText.textContent = node.name;
+    const lines = [];
+    let line = '';
+    node.name.split(/\s+/).forEach(word => {
+      if (line && `${line} ${word}`.length > 16) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = line ? `${line} ${word}` : word;
+      }
+    });
+    if (line) lines.push(line);
+    lines.forEach((label, index) => {
+      const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+      tspan.setAttribute('x', node.x);
+      tspan.setAttribute('dy', index === 0 ? '0' : '12');
+      tspan.textContent = label;
+      nameText.appendChild(tspan);
+    });
     group.appendChild(nameText);
 
     svg.appendChild(group);
   });
+}
+
+function selectBfsStart(nodeId) {
+  const select = document.getElementById('bfs-start-select');
+  if (!select) return;
+  select.value = nodeId;
+  state.selectedBfsStart = nodeId;
+  resetBfsTraversal();
+}
+
+async function runBfsTraversal() {
+  const select = document.getElementById('bfs-start-select');
+  const start = select?.value;
+  const button = document.getElementById('btn-run-bfs');
+  if (!start) {
+    showNotification('Select a starting intersection.', 'error');
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/graph/bfs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: start })
+    });
+    const result = await response.json();
+    if (!response.ok || !result.found) {
+      throw new Error(result.error || 'Unable to run BFS.');
+    }
+    if (select.value !== start) return;
+
+    stopBfsPlayback();
+    state.activeRoutePath = [];
+    state.bfsResult = result;
+    state.bfsStepIndex = result.steps.length ? 0 : -1;
+    renderBfsPanel();
+    renderGraphSVG(state.graphData, []);
+    showNotification(`BFS started from ${result.start_name}.`, 'success');
+  } catch (error) {
+    resetBfsTraversal();
+    document.getElementById('bfs-connectivity-message').textContent = error.message;
+    showNotification(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function stepBfsForward() {
+  if (!state.bfsResult || state.bfsStepIndex >= state.bfsResult.steps.length - 1) {
+    stopBfsPlayback();
+    return;
+  }
+  state.bfsStepIndex += 1;
+  renderBfsPanel();
+  renderGraphSVG(state.graphData, []);
+}
+
+function toggleBfsPlayback() {
+  if (state.bfsPlaying) {
+    stopBfsPlayback();
+    return;
+  }
+  if (!state.bfsResult || state.bfsStepIndex >= state.bfsResult.steps.length - 1) return;
+  state.bfsPlaying = true;
+  const button = document.getElementById('btn-bfs-play');
+  button.textContent = 'Pause';
+  state.bfsTimer = setInterval(() => {
+    if (state.bfsStepIndex >= state.bfsResult.steps.length - 1) {
+      stopBfsPlayback();
+      return;
+    }
+    stepBfsForward();
+    if (state.bfsStepIndex >= state.bfsResult.steps.length - 1) stopBfsPlayback();
+  }, 750);
+}
+
+function stopBfsPlayback() {
+  if (state.bfsTimer) clearInterval(state.bfsTimer);
+  state.bfsTimer = null;
+  state.bfsPlaying = false;
+  const button = document.getElementById('btn-bfs-play');
+  if (button) button.textContent = 'Play';
+}
+
+function renderBfsPanel() {
+  const result = state.bfsResult;
+  const step = result?.steps[state.bfsStepIndex];
+  const nodeNames = new Map((state.graphData?.nodes || []).map(node => [node.id, node.name]));
+  const label = id => nodeNames.get(id) || id;
+  const traversalList = document.getElementById('bfs-traversal-order');
+  const queueList = document.getElementById('bfs-current-queue');
+  const discoveredList = document.getElementById('bfs-newly-discovered');
+  if (!traversalList || !queueList || !discoveredList) return;
+
+  const populateList = (element, values, ordered = false) => {
+    element.replaceChildren();
+    values.forEach((id, index) => {
+      const item = document.createElement('li');
+      item.textContent = `${ordered ? `${index + 1}. ` : ''}${label(id)}`;
+      element.appendChild(item);
+    });
+    if (!values.length) {
+      const item = document.createElement('li');
+      item.textContent = '—';
+      item.className = 'bfs-empty-item';
+      element.appendChild(item);
+    }
+  };
+
+  const started = Boolean(result);
+  const finished = Boolean(step && state.bfsStepIndex === result.steps.length - 1);
+  const seen = step?.traversal_order || [];
+  const selectedStart = state.selectedBfsStart
+    ? `${state.selectedBfsStart}: ${label(state.selectedBfsStart)}`
+    : '—';
+  document.getElementById('bfs-start-name').textContent =
+    result ? `${result.start}: ${result.start_name}` : selectedStart;
+  document.getElementById('bfs-current-node').textContent = step ? label(step.current) : '—';
+  document.getElementById('bfs-visited-count').textContent =
+    `${seen.length} / ${result?.total_vertices || state.graphData?.nodes.length || 0}`;
+  document.getElementById('bfs-step-count').textContent =
+    `Step ${step ? state.bfsStepIndex + 1 : 0} of ${result?.steps.length || 0}`;
+  populateList(traversalList, seen, true);
+  populateList(queueList, step?.queue || []);
+  populateList(discoveredList, step?.newly_discovered || []);
+
+  document.getElementById('btn-bfs-step').disabled = !started || finished;
+  document.getElementById('btn-bfs-play').disabled = !started || finished;
+
+  const message = document.getElementById('bfs-connectivity-message');
+  const reachableCount = document.getElementById('bfs-reachable-count');
+  const reachableList = document.getElementById('bfs-reachable-list');
+  const unreachableList = document.getElementById('bfs-unreachable-list');
+  if (!started) {
+    message.textContent = 'Run BFS to explore intersections reachable from the selected start.';
+    reachableCount.textContent = '—';
+    reachableList.textContent = '—';
+    unreachableList.textContent = '—';
+  } else if (finished) {
+    const allReachable = result.is_fully_reachable;
+    message.textContent = allReachable
+      ? 'Every intersection is reachable from this starting point.'
+      : 'This road network is disconnected; BFS visits only intersections reachable from the starting point.';
+    reachableCount.textContent = `${result.vertices_visited} / ${result.total_vertices}`;
+    reachableList.textContent = result.reachable_names.join(', ') || 'None';
+    unreachableList.textContent = result.unreachable_names.join(', ') || 'None';
+  } else {
+    message.textContent = `BFS is exploring from ${result.start_name}. Connectivity results appear when traversal completes.`;
+    reachableCount.textContent = `${seen.length + (step?.queue.length || 0)} / ${result.total_vertices} discovered`;
+    reachableList.textContent = 'Traversal in progress';
+    unreachableList.textContent = '—';
+  }
+}
+
+function resetBfsTraversal() {
+  stopBfsPlayback();
+  state.bfsResult = null;
+  state.bfsStepIndex = -1;
+  renderBfsPanel();
+  if (state.graphData) renderGraphSVG(state.graphData, state.activeRoutePath);
 }
 
 // ---------------------------------------------------------------------------
@@ -499,9 +785,15 @@ async function handleCalculateRoute() {
   const algorithm = document.querySelector('input[name="route-algo"]:checked').value;
   const resultBox = document.getElementById('route-result-container');
 
-  resultBox.textContent = 'Calculating route...';
+  resultBox.textContent = 'Calculating route…';
+  const calculateButton = document.getElementById('btn-calculate-route');
+  calculateButton.disabled = true;
 
   try {
+    const graphResponse = await fetch('/api/graph');
+    if (!graphResponse.ok) throw new Error('Unable to refresh the road network.');
+    state.graphData = await graphResponse.json();
+
     const res = await fetch('/api/graph/route', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -510,24 +802,39 @@ async function handleCalculateRoute() {
 
     const data = await res.json();
     if (!res.ok || !data.found) {
-      resultBox.innerHTML = `
-        <div style="color:#f87171;">⚠️ ${data.error || 'No route could be found.'}</div>`;
+      resultBox.textContent = data.error || 'No route could be found.';
       state.activeRoutePath = [];
       renderGraphSVG(state.graphData, []);
+      showNotification(data.error || 'No route available.', 'error');
       return;
     }
 
     state.activeRoutePath = data.path;
     renderGraphSVG(state.graphData, data.path);
 
+    const algorithmName = document.createElement('strong');
+    algorithmName.textContent = data.algorithm;
     const route = document.createElement('p');
     route.className = 'route-sequence';
     route.textContent = data.path_names.join(' → ');
-    const distance = document.createElement('strong');
-    distance.textContent = `${data.total_distance_km} km`;
-    resultBox.replaceChildren(route, distance);
+    const details = document.createElement('p');
+    details.textContent = algorithm === 'dijkstra'
+      ? `Total cost: ${data.total_cost_minutes} min · Distance: ${data.total_distance_km} km`
+      : `Hops: ${data.hops} · Distance: ${data.total_distance_km} km`;
+    resultBox.replaceChildren(algorithmName, route, details);
+
+    if (algorithm === 'bfs' && Array.isArray(data.traversal_order)) {
+      const traversal = document.createElement('p');
+      traversal.className = 'route-traversal';
+      traversal.textContent = `BFS traversal: ${data.traversal_order.join(' → ')}`;
+      resultBox.appendChild(traversal);
+    }
+    showNotification('Route calculated.', 'success');
   } catch (err) {
-    resultBox.innerHTML = `<div style="color:#f87171;">Error: ${err.message}</div>`;
+    resultBox.textContent = `Unable to calculate route: ${err.message}`;
+    showNotification(err.message, 'error');
+  } finally {
+    calculateButton.disabled = false;
   }
 }
 
@@ -535,13 +842,23 @@ async function handleCalculateRoute() {
 // Queue-Based vs Graph-Based Comparison Fetch
 // ---------------------------------------------------------------------------
 async function fetchComparisonData() {
+  const source = document.getElementById('route-source-select').value;
+  const destination = document.getElementById('route-target-select').value;
+  const params = new URLSearchParams();
+  if (source) params.set('source', source);
+  if (destination) params.set('destination', destination);
+
   try {
-    const res = await fetch('/api/comparison');
-    if (!res.ok) return;
+    const res = await fetch(`/api/comparison?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const comp = await res.json();
     renderComparisonTable(comp);
-  } catch (e) {
-    console.warn('Comparison fetch error:', e);
+  } catch (error) {
+    console.warn('Comparison fetch error:', error.message);
+    const bfs = document.getElementById('comparison-bfs-result');
+    const dijkstra = document.getElementById('comparison-dijkstra-result');
+    if (bfs) bfs.textContent = 'Live graph analytics unavailable.';
+    if (dijkstra) dijkstra.textContent = 'Live graph analytics unavailable.';
   }
 }
 
@@ -551,31 +868,87 @@ function renderComparisonTable(data) {
 
   const q = data.micro_level_queue;
   const g = data.macro_level_graph;
+  const live = data.live_analytics;
+  if (!q || !g || !live) return;
 
-  container.innerHTML = `
-    <table class="comparison-table">
-      <thead>
-        <tr><th></th><th>Circular Queue</th><th>Graph Analysis</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th scope="row">Purpose</th>
-          <td>${q.purpose}</td>
-          <td>${g.purpose}</td>
-        </tr>
-        <tr>
-          <th scope="row">Structure</th>
-          <td>${q.data_structure}</td>
-          <td>${g.data_structure}</td>
-        </tr>
-        <tr>
-          <th scope="row">Scope</th>
-          <td>${q.operational_scope}</td>
-          <td>${g.operational_scope}</td>
-        </tr>
-      </tbody>
-    </table>
-  `;
+  document.getElementById('comparison-queue-capacity').textContent =
+    live.queue_capacity_per_direction ?? '—';
+  document.querySelector('#comparison-queue-capacity + small').textContent =
+    `${live.queue_capacity_total ?? '—'} total · vehicles per approach`;
+  document.getElementById('comparison-queue-waiting').textContent =
+    live.vehicles_waiting ?? '—';
+  document.getElementById('comparison-queue-served').textContent =
+    live.vehicles_served ?? '—';
+  document.getElementById('comparison-queue-utilization').textContent =
+    live.queue_utilization_percent == null ? '—' : `${live.queue_utilization_percent}%`;
+  document.getElementById('comparison-graph-vertices').textContent = live.vertices ?? '—';
+  document.getElementById('comparison-graph-edges').textContent = live.road_links ?? '—';
+
+  const origin = live.origin;
+  const destination = live.destination;
+  document.getElementById('comparison-route-selection').textContent =
+    origin && destination
+      ? `${origin.name || origin.id || 'Unknown'} → ${destination.name || destination.id || 'Unknown'}`
+      : 'Select a route in Graph Analysis';
+  renderComparisonRoute('comparison-bfs-result', live.bfs, 'bfs');
+  renderComparisonRoute('comparison-dijkstra-result', live.dijkstra, 'dijkstra');
+
+  const rows = [
+    ['Purpose', q.purpose, g.purpose],
+    ['Data structure', q.data_structure, g.data_structure],
+    ['Main operations', q.main_operations, g.main_operations],
+    ['Algorithm', q.algorithm, g.algorithm],
+    ['Time complexity', q.time_complexity, g.time_complexity],
+    ['Space complexity', q.space_complexity, g.space_complexity],
+    ['Application in this project', q.application, g.application]
+  ];
+
+  const table = document.createElement('table');
+  table.className = 'comparison-table';
+  table.innerHTML = '<thead><tr><th scope="col">Aspect</th><th scope="col">Circular Queue</th><th scope="col">Graph Analysis</th></tr></thead>';
+  const body = document.createElement('tbody');
+  rows.forEach(([label, queueValue, graphValue]) => {
+    const row = document.createElement('tr');
+    [label, queueValue, graphValue].forEach((value, index) => {
+      const cell = document.createElement(index === 0 ? 'th' : 'td');
+      if (index === 0) cell.setAttribute('scope', 'row');
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  });
+  table.appendChild(body);
+  container.replaceChildren(table);
+}
+
+function renderComparisonRoute(elementId, result, algorithm) {
+  const container = document.getElementById(elementId);
+  if (!container) return;
+  if (!result) {
+    container.textContent = 'Choose an origin and destination in Graph Analysis.';
+    return;
+  }
+  if (!result.found) {
+    container.textContent = result.error || 'No route is available for this selection.';
+    return;
+  }
+
+  const path = document.createElement('p');
+  path.className = 'comparison-route-path';
+  path.textContent = (result.path_names || result.path || []).join(' → ');
+  const details = document.createElement('p');
+  details.className = 'comparison-route-details';
+  details.textContent = algorithm === 'bfs'
+    ? `${result.hops} hops · ${result.total_distance_km} km`
+    : `${result.total_cost_minutes} min · ${result.total_distance_km} km`;
+  container.replaceChildren(path, details);
+
+  if (algorithm === 'bfs' && Array.isArray(result.traversal_order)) {
+    const traversal = document.createElement('p');
+    traversal.className = 'comparison-route-traversal';
+    traversal.textContent = `Traversal: ${result.traversal_order.join(' → ')}`;
+    container.appendChild(traversal);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +964,7 @@ function initEventListeners() {
   });
   document.getElementById('btn-pause').addEventListener('click', () => postAction('/api/simulation/pause'));
   document.getElementById('btn-reset').addEventListener('click', async () => {
-    await postAction('/api/simulation/reset');
+    await postAction('/api/simulation/reset', {}, 'Simulation reset.');
     state.animatedDepartedIds.clear();
     state.prevQueueCounts = {};
     const layer = document.getElementById('intersection-crossing-layer');
@@ -658,11 +1031,49 @@ function initEventListeners() {
     });
   }
 
+  document.getElementById('btn-queue-enqueue').addEventListener('click', () => {
+    const vehicleType = document.getElementById('queue-enqueue-type').value;
+    postAction('/api/vehicles/add', {
+      direction: state.selectedVisualizerQueue,
+      vehicle_type: vehicleType
+    });
+  });
+  document.getElementById('btn-queue-dequeue').addEventListener('click', () => {
+    postAction(`/api/queues/${state.selectedVisualizerQueue}/dequeue`);
+  });
+  document.getElementById('btn-queue-peek').addEventListener('click', () => {
+    postAction(`/api/queues/${state.selectedVisualizerQueue}/peek`);
+  });
+  document.getElementById('btn-queue-clear').addEventListener('click', () => {
+    postAction(`/api/queues/${state.selectedVisualizerQueue}/clear`);
+  });
+
   // Route Calculate Button
   const calcRouteBtn = document.getElementById('btn-calculate-route');
   if (calcRouteBtn) {
     calcRouteBtn.addEventListener('click', handleCalculateRoute);
   }
+  document.getElementById('btn-reset-route').addEventListener('click', resetRoute);
+  document.getElementById('btn-run-bfs').addEventListener('click', runBfsTraversal);
+  document.getElementById('btn-bfs-step').addEventListener('click', stepBfsForward);
+  document.getElementById('btn-bfs-play').addEventListener('click', toggleBfsPlayback);
+  document.getElementById('btn-bfs-reset').addEventListener('click', resetBfsTraversal);
+  document.getElementById('bfs-start-select').addEventListener('change', event => {
+    state.selectedBfsStart = event.target.value;
+    resetBfsTraversal();
+  });
+  document.querySelectorAll('input[name="route-algo"]').forEach(option => {
+    option.addEventListener('change', () => {
+      resetRoute();
+      if (state.graphData) renderGraphSVG(state.graphData, []);
+    });
+  });
+  ['route-source-select', 'route-target-select'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      resetRoute();
+      fetchComparisonData();
+    });
+  });
 
 }
 
@@ -681,7 +1092,26 @@ function activateDashboardTab(activeTab) {
   });
 }
 
-async function postAction(endpoint, payload = {}) {
+function resetRoute() {
+  state.activeRoutePath = [];
+  const resultBox = document.getElementById('route-result-container');
+  resultBox.textContent = '';
+  if (state.graphData) renderGraphSVG(state.graphData, []);
+}
+
+function showNotification(message, kind = 'success') {
+  const notification = document.getElementById('app-notification');
+  if (!notification || !message) return;
+  notification.textContent = message;
+  notification.dataset.kind = kind;
+  notification.hidden = false;
+  if (state.notificationTimeout) clearTimeout(state.notificationTimeout);
+  state.notificationTimeout = setTimeout(() => {
+    notification.hidden = true;
+  }, 3000);
+}
+
+async function postAction(endpoint, payload = {}, successMessage = null) {
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -690,10 +1120,14 @@ async function postAction(endpoint, payload = {}) {
     });
     const data = await res.json();
     if (!res.ok) {
-      alert(data.error || data.message || 'Operation failed');
+      showNotification(data.error || data.message || 'Operation failed.', 'error');
+      return;
     }
-    fetchSimulationState();
+    showNotification(successMessage || data.message || 'Operation completed.', 'success');
+    await fetchSimulationState();
+    fetchComparisonData();
   } catch (err) {
     console.error(`Error requesting ${endpoint}:`, err);
+    showNotification(`Request failed: ${err.message}`, 'error');
   }
 }

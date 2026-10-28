@@ -37,6 +37,37 @@ class TestTrafficGraph(unittest.TestCase):
         self.assertEqual(res["hops"], 0)
         self.assertEqual(res["path"], ["INT-1"])
 
+    def test_bfs_complete_traversal_records_each_vertex_once(self):
+        result = self.graph.bfs_traversal("INT-6")
+        self.assertTrue(result["found"])
+        self.assertEqual(
+            result["traversal_order"],
+            ["INT-6", "INT-2", "INT-5", "INT-1", "INT-4", "INT-3", "INT-7"]
+        )
+        self.assertEqual(len(result["traversal_order"]), len(set(result["traversal_order"])))
+        self.assertEqual(result["vertices_visited"], 7)
+        self.assertTrue(result["is_fully_reachable"])
+        self.assertEqual(result["steps"][0]["current"], "INT-6")
+        self.assertEqual(result["steps"][0]["newly_discovered"], ["INT-2", "INT-5"])
+
+    def test_bfs_traversal_from_another_start(self):
+        result = self.graph.bfs_traversal("INT-1")
+        self.assertEqual(result["traversal_order"][0], "INT-1")
+        self.assertEqual(result["vertices_visited"], 7)
+
+    def test_bfs_traversal_reports_disconnected_vertices(self):
+        self.graph.add_intersection("INT-ISOLATED", "Remote Island", 600, 50, "Isolated")
+        result = self.graph.bfs_traversal("INT-1")
+        self.assertTrue(result["found"])
+        self.assertFalse(result["is_fully_reachable"])
+        self.assertEqual(result["unreachable"], ["INT-ISOLATED"])
+        self.assertEqual(result["steps"][-1]["queue"], [])
+
+    def test_bfs_traversal_rejects_invalid_start(self):
+        result = self.graph.bfs_traversal("MISSING")
+        self.assertFalse(result["found"])
+        self.assertIn("does not exist", result["error"])
+
     def test_bfs_disconnected_node(self):
         # Add an isolated node
         self.graph.add_intersection("INT-ISOLATED", "Remote Island", 600, 50, "Isolated")

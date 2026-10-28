@@ -18,6 +18,8 @@
     </div>
   </header>
 
+  <div id="app-notification" class="app-notification" role="status" aria-live="polite" hidden></div>
+
   <nav class="dashboard-tabs" role="tablist" aria-label="Dashboard sections">
     <button class="dashboard-tab active" id="tab-simulation" type="button" role="tab"
       aria-selected="true" aria-controls="panel-simulation" data-tab="simulation">Simulation</button>
@@ -37,11 +39,11 @@
       <div class="control-buttons-group">
         <button id="btn-start" class="btn btn-primary" title="Start or resume simulation">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Start
+          Start Simulation
         </button>
         <button id="btn-pause" class="btn btn-warning" title="Pause simulation clock" disabled>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-          Pause
+          Pause Simulation
         </button>
         <button id="btn-reset" class="btn btn-danger" title="Reset simulation state">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
@@ -81,6 +83,7 @@
         </div>
 
         <div class="intersection-container">
+          <div class="intersection-status" id="intersection-status" aria-live="polite">Signals loading…</div>
           <div class="intersection-stage" id="intersection-stage">
             
             <!-- Road Surfaces -->
@@ -188,10 +191,10 @@
 
         <!-- Directional Queue Tabs -->
         <div class="queue-tabs-nav">
-          <button class="queue-tab-btn active" data-direction="North">North</button>
-          <button class="queue-tab-btn" data-direction="East">East</button>
-          <button class="queue-tab-btn" data-direction="South">South</button>
-          <button class="queue-tab-btn" data-direction="West">West</button>
+          <button class="queue-tab-btn active" data-direction="North">North <span data-queue-count="North">0</span></button>
+          <button class="queue-tab-btn" data-direction="East">East <span data-queue-count="East">0</span></button>
+          <button class="queue-tab-btn" data-direction="South">South <span data-queue-count="South">0</span></button>
+          <button class="queue-tab-btn" data-direction="West">West <span data-queue-count="West">0</span></button>
         </div>
 
         <!-- Waiting Vehicles List -->
@@ -226,11 +229,28 @@
       <div class="queue-metrics">
         <div><span>Front</span><strong id="dsa-front-val">-1</strong></div>
         <div><span>Rear</span><strong id="dsa-rear-val">-1</strong></div>
+        <div><span>Size / Capacity</span><strong id="dsa-size-val">0 / 0</strong></div>
+        <div><span>Status</span><strong id="dsa-status-val">Empty</strong></div>
       </div>
 
       <div class="queue-activity" id="wrap-around-notice" aria-live="polite"></div>
 
-      <!-- 8-Slot Fixed Array Visualization -->
+      <div class="queue-controls" aria-label="Circular queue operations">
+        <select id="queue-enqueue-type" class="input-select" aria-label="Vehicle type to enqueue">
+          <option value="Car">Car</option>
+          <option value="Bus">Bus</option>
+          <option value="Truck">Truck</option>
+          <option value="Bike">Bike</option>
+          <option value="Ambulance">Ambulance</option>
+          <option value="Fire Engine">Fire Engine</option>
+          <option value="Police Vehicle">Police Vehicle</option>
+        </select>
+        <button id="btn-queue-enqueue" class="btn btn-primary" type="button">Enqueue</button>
+        <button id="btn-queue-dequeue" class="btn btn-secondary" type="button">Dequeue</button>
+        <button id="btn-queue-peek" class="btn btn-secondary" type="button">Peek Front</button>
+        <button id="btn-queue-clear" class="btn btn-secondary" type="button">Clear Queue</button>
+      </div>
+
       <div class="array-slots-grid" id="array-slots-grid">
         <!-- Rendered by script.js -->
       </div>
@@ -247,49 +267,177 @@
         </div>
       </div>
 
+      <div class="bfs-toolbar">
+        <div class="form-group">
+          <label class="form-label" for="bfs-start-select">Starting intersection</label>
+          <select id="bfs-start-select" class="input-select"></select>
+        </div>
+        <button id="btn-run-bfs" class="btn btn-primary" type="button">Run BFS</button>
+        <button id="btn-bfs-step" class="btn btn-secondary" type="button" disabled>Step Forward</button>
+        <button id="btn-bfs-play" class="btn btn-secondary" type="button" disabled>Play</button>
+        <button id="btn-bfs-reset" class="btn btn-secondary" type="button">Reset</button>
+        <strong id="bfs-step-count" class="bfs-step-count" aria-live="polite">Step 0 of 0</strong>
+      </div>
+
       <div class="graph-route-grid">
 
         <!-- Left: Interactive SVG Road Network -->
         <div class="graph-canvas-box">
           <svg class="graph-svg" id="city-traffic-svg" viewBox="0 0 600 420"></svg>
+          <div class="graph-legend" aria-label="BFS graph legend">
+            <span><i class="legend-unvisited"></i>Unvisited</span>
+            <span><i class="legend-discovered"></i>Discovered / queued</span>
+            <span><i class="legend-active"></i>Current</span>
+            <span><i class="legend-visited"></i>Visited</span>
+          </div>
         </div>
 
-        <!-- Right: Route Planning & Traversal Controls -->
-        <div class="route-form">
-          <div class="form-group">
-            <label class="form-label" for="route-source-select">Origin</label>
-            <select id="route-source-select" class="input-select"></select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="route-target-select">Destination</label>
-            <select id="route-target-select" class="input-select"></select>
-          </div>
-
-          <div class="form-group">
-            <span class="form-label">Algorithm</span>
-            <div class="route-algorithm-options">
-              <label class="route-algorithm-option">
-                <input type="radio" name="route-algo" value="bfs" checked> BFS
-              </label>
+        <aside class="graph-side-panel">
+          <section class="bfs-result-card">
+            <h3>BFS traversal</h3>
+            <p class="bfs-starting-node">Starting intersection: <strong id="bfs-start-name">—</strong></p>
+            <div class="bfs-result-stat-row">
+              <span>Vertices visited</span>
+              <strong id="bfs-visited-count">0 / 0</strong>
             </div>
-          </div>
+            <div class="bfs-result-stat-row">
+              <span>Current vertex</span>
+              <strong id="bfs-current-node">—</strong>
+            </div>
+            <div class="bfs-result-section">
+              <h4>Traversal order</h4>
+              <ol id="bfs-traversal-order" class="bfs-node-list"></ol>
+            </div>
+            <div class="bfs-result-section">
+              <h4>Current BFS queue</h4>
+              <ul id="bfs-current-queue" class="bfs-node-list"></ul>
+            </div>
+            <div class="bfs-result-section">
+              <h4>Newly discovered</h4>
+              <ul id="bfs-newly-discovered" class="bfs-node-list"></ul>
+            </div>
+          </section>
 
-          <button id="btn-calculate-route" class="btn btn-primary">
-            Calculate Route
-          </button>
-
-          <!-- Route Output Container -->
-          <div class="route-result-box" id="route-result-container"></div>
-        </div>
+          <section class="route-form route-form-compact" aria-label="Point-to-point route planning">
+            <h3>Route planning</h3>
+            <div class="form-group">
+              <label class="form-label" for="route-source-select">Origin</label>
+              <select id="route-source-select" class="input-select"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="route-target-select">Destination</label>
+              <select id="route-target-select" class="input-select"></select>
+            </div>
+            <div class="form-group">
+              <span class="form-label">Algorithm</span>
+              <div class="route-algorithm-options">
+                <label class="route-algorithm-option">
+                  <input type="radio" name="route-algo" value="bfs" checked> BFS
+                </label>
+                <label class="route-algorithm-option">
+                  <input type="radio" name="route-algo" value="dijkstra"> Dijkstra
+                </label>
+              </div>
+            </div>
+            <div class="route-actions">
+              <button id="btn-calculate-route" class="btn btn-primary" type="button">Calculate Route</button>
+              <button id="btn-reset-route" class="btn btn-secondary" type="button">Reset Route</button>
+            </div>
+            <div class="route-result-box" id="route-result-container" aria-live="polite"></div>
+          </section>
 
       </div>
+
+      <section class="graph-connectivity" aria-live="polite">
+        <div>
+          <h3>Traffic Network Connectivity</h3>
+          <p id="bfs-connectivity-message">Run BFS to explore intersections reachable from the selected start.</p>
+        </div>
+        <div class="connectivity-results">
+          <div><span>Reachable</span><strong id="bfs-reachable-count">—</strong></div>
+          <div><span>Reachable intersections</span><p id="bfs-reachable-list">—</p></div>
+          <div><span>Unreachable intersections</span><p id="bfs-unreachable-list">—</p></div>
+        </div>
+      </section>
+
+      <details class="bfs-explanation">
+        <summary>How BFS Works</summary>
+        <div class="bfs-explanation-content">
+          <ol>
+            <li>BFS starts at the selected vertex.</li>
+            <li>It uses a FIFO queue to process discovered vertices.</li>
+            <li>It discovers neighboring vertices before processing the next level.</li>
+            <li>It continues until all vertices reachable from the start have been explored.</li>
+          </ol>
+          <p><strong>Time:</strong> O(V + E) with an adjacency list. <strong>Auxiliary space:</strong> O(V).</p>
+          <p>BFS finds a minimum-edge path in an unweighted graph; it does not necessarily find the minimum-distance route when road weights differ.</p>
+          <p>If the graph is disconnected, a traversal from one vertex visits only the vertices reachable from that start.</p>
+        </div>
+      </details>
     </section>
 
     </section>
 
     <section class="tab-panel comparison-panel" id="panel-comparison" role="tabpanel"
       aria-labelledby="tab-comparison" data-panel="comparison" hidden>
+    <section class="comparison-live-grid" aria-label="Live comparison analytics">
+      <article class="card comparison-analytics-card">
+        <div class="card-header">
+          <div class="card-title-group"><h2>Circular Queue</h2></div>
+          <span class="comparison-context">Live simulation</span>
+        </div>
+        <div class="comparison-metrics-grid">
+          <div class="comparison-metric">
+            <span>Capacity</span>
+            <strong id="comparison-queue-capacity">—</strong>
+            <small>vehicles per approach</small>
+          </div>
+          <div class="comparison-metric">
+            <span>Waiting</span>
+            <strong id="comparison-queue-waiting">—</strong>
+            <small>across all approaches</small>
+          </div>
+          <div class="comparison-metric">
+            <span>Served</span>
+            <strong id="comparison-queue-served">—</strong>
+            <small>vehicles</small>
+          </div>
+          <div class="comparison-metric">
+            <span>Utilization</span>
+            <strong id="comparison-queue-utilization">—</strong>
+            <small>of total queue capacity</small>
+          </div>
+        </div>
+      </article>
+
+      <article class="card comparison-analytics-card">
+        <div class="card-header">
+          <div class="card-title-group"><h2>Graph Analysis</h2></div>
+          <span class="comparison-context" id="comparison-route-selection">Select a route in Graph Analysis</span>
+        </div>
+        <div class="comparison-graph-counts">
+          <div class="comparison-metric">
+            <span>Vertices</span>
+            <strong id="comparison-graph-vertices">—</strong>
+          </div>
+          <div class="comparison-metric">
+            <span>Road links</span>
+            <strong id="comparison-graph-edges">—</strong>
+          </div>
+        </div>
+        <div class="comparison-route-grid">
+          <section class="comparison-route-result">
+            <h3>BFS <span>Minimum hops</span></h3>
+            <div id="comparison-bfs-result" aria-live="polite">Waiting for route selection…</div>
+          </section>
+          <section class="comparison-route-result">
+            <h3>Dijkstra <span>Minimum travel cost</span></h3>
+            <div id="comparison-dijkstra-result" aria-live="polite">Waiting for route selection…</div>
+          </section>
+        </div>
+      </article>
+    </section>
+
     <section class="card" id="section-comparison">
       <div class="card-header">
         <div class="card-title-group">

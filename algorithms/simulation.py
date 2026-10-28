@@ -16,7 +16,13 @@ import threading
 import time
 from typing import Dict, List, Optional, Any
 from algorithms.circular_queue import CircularQueue, QueueOverflowError
-from algorithms.signal_scheduler import SignalScheduler, SchedulingStrategy, DIRECTIONS, SignalState
+from algorithms.signal_scheduler import (
+    EmergencyPriorityState,
+    SignalScheduler,
+    SchedulingStrategy,
+    DIRECTIONS,
+    SignalState
+)
 from algorithms.traffic_graph import TrafficGraph, create_sample_city_network
 
 
@@ -24,6 +30,9 @@ class TrafficSimulationManager:
     """
     Central Coordinator managing directional circular queues, signal scheduler,
     traffic graph, simulation clock, and performance analytics.
+
+    Emergency priority is approach-level: ordinary vehicles already ahead of an
+    emergency vehicle retain FIFO order, then the emergency vehicle is served.
     """
 
     def __init__(self, queue_capacity: int = 8):
@@ -60,7 +69,7 @@ class TrafficSimulationManager:
         self._ticker_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-        # Preload realistic initial vehicles for instant demonstration
+        # Seed ordinary traffic only so emergency preemption is demonstrated on demand.
         self._seed_initial_vehicles()
 
     def _seed_initial_vehicles(self) -> None:
@@ -69,9 +78,9 @@ class TrafficSimulationManager:
             ("North", "Car", False, 0),
             ("North", "Bus", False, 0),
             ("East", "Car", False, 0),
-            ("East", "Ambulance", True, 1),
+            ("East", "Car", False, 0),
             ("South", "Truck", False, 0),
-            ("West", "Police Vehicle", True, 3),
+            ("West", "Car", False, 0),
             ("West", "Car", False, 0),
         ]
         for direction, v_type, is_emg, prio in sample_batch:
@@ -132,6 +141,7 @@ class TrafficSimulationManager:
                     f"{'🚨 EMERGENCY ' if is_emergency else ''}{vehicle_type} [{v_id}] queued at {direction}.",
                     {"vehicle_id": v_id, "direction": direction, "is_emergency": is_emergency}
                 )
+                self.scheduler.update_emergency_priority(self.queues, self.sim_time)
                 return {
                     "success": True,
                     "vehicle": vehicle,
@@ -188,10 +198,20 @@ class TrafficSimulationManager:
                         f"Vehicle {vehicle['id']} ({vehicle['type']}) cleared {active_dir} intersection after {wait_time}s wait.",
                         {"vehicle_id": vehicle["id"], "direction": active_dir, "wait_time": wait_time}
                     )
+                    self.scheduler.update_emergency_priority(self.queues, self.sim_time)
 
             # Sync road traffic with city graph for CBD intersection
             # INT-1 (Central Junction) reflects local queues
             self._update_graph_dynamics()
+
+            sched_res.update({
+                "active_direction": self.scheduler.active_direction,
+                "current_phase": self.scheduler.current_phase.value,
+                "signals": self.scheduler.get_signal_states(),
+                "priority_state": self.scheduler.priority_state.value,
+                "emergency_direction": self.scheduler.emergency_direction,
+                "emergency_vehicle_id": self.scheduler.emergency_vehicle_id
+            })
 
             return {
                 "sim_time": self.sim_time,
@@ -297,7 +317,10 @@ class TrafficSimulationManager:
                 q = self.queues[d]
                 directional_waiting[d] = len(q)
                 for item in q.get_fifo_items():
-                    if item.get("is_emergency", False):
+                    if (
+                        item.get("is_emergency", False)
+                        or str(item.get("type", item.get("vehicle_type", ""))).casefold() == "ambulance"
+                    ):
                         emergency_waiting += 1
 
             avg_wait = (
@@ -324,11 +347,23 @@ class TrafficSimulationManager:
                 "sim_time": self.sim_time,
                 "active_direction": self.scheduler.active_direction,
                 "current_phase": self.scheduler.current_phase.value,
+                "priority_state": self.scheduler.priority_state.value,
+                "emergency": (
+                    {
+                        "state": self.scheduler.priority_state.value,
+                        "direction": self.scheduler.emergency_direction,
+                        "vehicle_id": self.scheduler.emergency_vehicle_id
+                    }
+                    if self.scheduler.priority_state != EmergencyPriorityState.NORMAL
+                    else None
+                ),
                 "phase_elapsed": self.scheduler.phase_elapsed_time,
                 "remaining_phase_time": (
-                    (self.scheduler.green_duration - self.scheduler.phase_elapsed_time)
+                    None
+                    if self.scheduler.priority_state == EmergencyPriorityState.EMERGENCY_ACTIVE
+                    else max(0, self.scheduler.green_duration - self.scheduler.phase_elapsed_time)
                     if self.scheduler.current_phase == SignalState.GREEN
-                    else (self.scheduler.yellow_duration - self.scheduler.phase_elapsed_time)
+                    else max(0, self.scheduler.yellow_duration - self.scheduler.phase_elapsed_time)
                 ),
                 "signals": self.scheduler.get_signal_states(),
                 "config": {
@@ -361,69 +396,71 @@ class TrafficSimulationManager:
                 }
             }
 
-    def run_experimental_comparison(self) -> Dict[str, Any]:
-        """
-        Run a reproducible, deterministic synthetic experiment comparing
-        Queue-based Scheduling with Graph-based Network Analysis
-        under identical synthetic traffic inputs.
-        """
-        # Experiment 1: Queue Scheduling Metrics under 30-vehicle workload
-        q_test_queues = {d: CircularQueue(8) for d in DIRECTIONS}
-        rr_scheduler = SignalScheduler(green_duration=6, yellow_duration=2, strategy=SchedulingStrategy.ROUND_ROBIN)
-        prio_scheduler = SignalScheduler(green_duration=6, yellow_duration=2, strategy=SchedulingStrategy.ADAPTIVE_PRIORITY)
+    def run_experimental_comparison(
+        self,
+        source: Optional[str] = None,
+        destination: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Return live queue analytics and routes from the current graph state."""
+        queue_capacity = self.queue_capacity * len(DIRECTIONS)
+        total_waiting = sum(len(queue) for queue in self.queues.values())
+        adjacency_pairs = {
+            (edge.from_node, edge.to_node)
+            for edges in self.graph.adjacency.values()
+            for edge in edges
+        }
+        road_link_keys = set()
+        for start, end in adjacency_pairs:
+            if (end, start) in adjacency_pairs:
+                road_link_keys.add(tuple(sorted((start, end))))
+            else:
+                road_link_keys.add((start, end))
+        road_links = len(road_link_keys)
+        nodes = self.graph.nodes
 
-        # Baseline synthetic arrival pattern
-        synthetic_pattern = [
-            ("North", "Car", False, 0),
-            ("North", "Bus", False, 0),
-            ("North", "Ambulance", True, 1),
-            ("East", "Car", False, 0),
-            ("East", "Car", False, 0),
-            ("South", "Truck", False, 0),
-            ("West", "Fire Engine", True, 2),
-            ("West", "Car", False, 0),
-        ]
-
-        # Simulate 20 steps
-        rr_served = 0
-        prio_served = 0
-
-        # Graph benchmark
-        bfs_res = self.graph.bfs_shortest_path("INT-6", "INT-4")
-        dijkstra_res = self.graph.dijkstra_shortest_path("INT-6", "INT-4")
+        bfs_result = None
+        dijkstra_result = None
+        if source and destination:
+            bfs_result = self.graph.bfs_shortest_path(source, destination)
+            dijkstra_result = self.graph.dijkstra_shortest_path(source, destination)
 
         return {
-            "comparison_title": "Comparative Analysis: Circular Queue Scheduling vs Graph-Based Traffic Flow",
             "micro_level_queue": {
-                "data_structure": "Circular Queue (Fixed Array, Modulo Wrap-Around)",
-                "operational_scope": "Single 4-Way Intersection",
-                "purpose": "Fair FIFO vehicle scheduling, light phase transitions, and emergency preemption",
-                "time_complexity": "O(1) Enqueue, O(1) Dequeue, O(1) Peek",
-                "space_complexity": "O(C) where C is fixed queue capacity",
-                "current_live_metrics": {
-                    "total_served": self.total_served,
-                    "avg_waiting_time_sec": round(self.total_waiting_time / max(1, self.total_served), 2),
-                    "queue_capacity_per_lane": self.queue_capacity,
-                    "fairness_policy": self.scheduler.strategy.value
-                }
+                "purpose": "Manage waiting vehicles at each intersection approach in FIFO order.",
+                "data_structure": "Fixed-capacity circular array queue (one queue per direction).",
+                "main_operations": "Enqueue, dequeue, peek, clear, and check full/empty.",
+                "algorithm": "O(1) circular-buffer FIFO operations; round-robin or adaptive signal selection.",
+                "time_complexity": "Enqueue O(1); dequeue O(1); peek O(1).",
+                "space_complexity": "O(C) per approach, where C is its fixed queue capacity.",
+                "application": "Stores waiting vehicles in the four intersection approach queues."
             },
             "macro_level_graph": {
-                "data_structure": "Adjacency List (Vertices & Directed Weighted Edges)",
-                "operational_scope": "Multi-Intersection Smart City Road Network",
-                "purpose": "Global route planning, congestion management, and network connectivity",
-                "time_complexity": "BFS: O(V + E) | Dijkstra: O((V + E) log V)",
-                "space_complexity": "O(V + E) for Graph Representation",
-                "current_live_metrics": {
-                    "total_intersections": len(self.graph.nodes),
-                    "city_congestion_score": f"{self.graph.calculate_congestion_score()}%",
-                    "sample_bfs_hops": bfs_res.get("hops", 0),
-                    "sample_dijkstra_cost_min": dijkstra_res.get("total_cost_minutes", 0)
-                }
+                "purpose": "Find routes between intersections by hop count or weighted travel cost.",
+                "data_structure": "Weighted adjacency-list road network.",
+                "main_operations": "Add intersections and roads; traverse neighbors; calculate routes.",
+                "algorithm": "BFS for minimum-hop paths; heap-based Dijkstra for minimum travel-cost paths.",
+                "time_complexity": "BFS O(V + E); Dijkstra O((V + E) log V).",
+                "space_complexity": "Graph O(V + E); BFS auxiliary O(V); Dijkstra auxiliary O(V + E) worst case.",
+                "application": "Models road connections and calculates routes for selected intersections."
             },
-            "educational_synthesis": (
-                "Queue-based control operates at the MICRO layer (local intersection lane management), "
-                "ensuring zero conflicts and bounded waiting times via O(1) circular buffer queues. "
-                "Graph-based analysis operates at the MACRO layer (city network topography), "
-                "evaluating dynamic congestion and finding unweighted (BFS) and weighted (Dijkstra) paths."
-            )
+            "live_analytics": {
+                "queue_capacity_per_direction": self.queue_capacity,
+                "queue_capacity_total": queue_capacity,
+                "vehicles_waiting": total_waiting,
+                "vehicles_served": self.total_served,
+                "queue_utilization_percent": round(total_waiting / queue_capacity * 100, 1)
+                if queue_capacity else 0.0,
+                "vertices": len(nodes),
+                "road_links": road_links,
+                "origin": {
+                    "id": source,
+                    "name": nodes[source].name if source in nodes else None
+                },
+                "destination": {
+                    "id": destination,
+                    "name": nodes[destination].name if destination in nodes else None
+                },
+                "bfs": bfs_result,
+                "dijkstra": dijkstra_result
+            }
         }
